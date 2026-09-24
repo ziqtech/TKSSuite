@@ -102,7 +102,7 @@ BASIC_FIELDS = [
     ("skill_text_id", 0, "名称文本ID", 'tkt', "技能名称 TKT 文本ID"),
     ("skill_desc_id", 2, "说明文本ID", 'tkt', "技能说明的独立 TKT 文本ID；原版直接读取此值，不由名称文本ID推算"),
     ("type", 4, "技能类型", 'type', "0=指令 1=主动（装备属性加成，非战斗菜单主动施放） 2=被动（由技能编号303..330等选择反应） 3=移动；新增类型2不会自动生成任意反应"),
-    ("jp_cost", 6, "学习基础技点", 'int', "学习技能基础技点；实际消耗 = 基础技点 * (250 - 角色当前悟性) / 200 (sub_41E248)"),
+    ("jp_cost", 6, "学习技能点", 'int', "学习技能点；实际消耗 = 学习技能点 * (250 - 角色当前悟性) / 200 (sub_41E248)"),
 ]
 
 TREE_FIELDS = []
@@ -121,24 +121,24 @@ EFFECT_FIELDS = [
     ("hit_pct", 54, "命中加成%", 'int', "相对基础命中的百分比加成"),
     ("eva_pct", 56, "闪避加成%", 'int', "相对基础闪避的百分比加成"),
     ("spd_pct", 58, "速度加成%", 'int', "相对基础速度的百分比加成"),
-    ("move_up", 60, "移动力增量", 'int', "直接增加移动力：1=+1，2=+2"),
-    ("atk_count", 62, "普攻次数增量", 'int', "基础普攻次数为1：1=二连，2=三连；实际执行还受技能/反应限制"),
+    ("move_up", 60, "移动增加", 'int', "直接增加移动力：1=+1，2=+2"),
+    ("atk_count", 62, "普攻次数增加", 'int', "基础普攻次数为1：1=二连，2=三连；实际执行还受技能/反应限制"),
     ("special_flags",64,"特殊标志", 'flags', "飘浮=避开陷阱；飙行=额外移动机会；搜宝=检查沿途宝物；解陷=处理沿途陷阱；保留未知高位"),
     ("mp_reduce", 66, "内息消耗减%", 'int', "施展指令技能内息减少%"),
 ]
 
 IMMUNE_FIELDS = [
-    ("immunity1", 68, "状态抗性掩码1–16", 'mask', "选择状态1–16的抗性写入位置，配合抗性档位（offset88）使用，勾选不等于免疫；未知第16位保留原值"),
-    ("immunity2", 70, "状态抗性掩码17–32", 'mask', "选择状态17–32的抗性写入位置，配合抗性档位（offset88）使用，勾选不等于免疫；未知第32位保留原值"),
+    ("immunity1", 68, "状态抗性1–16", 'mask', "选择状态1–16的抗性写入位置，配合抗性档位（offset88）使用，勾选不等于免疫；未知第16位保留原值"),
+    ("immunity2", 70, "状态抗性17–32", 'mask', "选择状态17–32的抗性写入位置，配合抗性档位（offset88）使用，勾选不等于免疫；未知第32位保留原值"),
     ("exp_bonus", 72, "战后经验增加%", 'int', "战斗经验值增加% (鬼才)"),
     ("jp_bonus", 74, "战后技点增加%", 'int', "战斗技能点增加% (天才)"),
     ("magic_def", 76, "术法类伤害减免%", 'int', "减少术法类HP/MP伤害；按运行类别>=2及物品例外处理，不是单凭TKKon物理执行标志判断"),
     ("cost_gold", 78, "消耗金钱", 'int', "原版技能执行消耗的金钱，不限于召唤或幻灵技能"),
-    ("cost_res2", 80, "耗费兽元", 'int', "原版技能执行消耗的第二资源（暂名兽元），不限于召唤技能"),
+    ("cost_res2", 80, "耗费兽元", 'int', "原版技能执行消耗的兽元，不限于召唤技能"),
 ]
 
 ADVANCED_FIELDS = [
-    ("cost_res3", 82, "耗费灵魂", 'int', "原版技能执行消耗的第三资源（暂名灵魂），不限于幻灵技能"),
+    ("cost_res3", 82, "耗费灵魂", 'int', "原版技能执行消耗的灵魂，不限于幻灵技能"),
     ("turn_shift", 84, "目标时序系数", 'int', "正数：本值 × (260 - 目标速度)；负数：本值 × 目标速度；伤害路径还检查实际伤害，并非仅对敌人的固定时序偏移"),
     ("mp_cost", 86, "耗费内力", 'int', "基础内力消耗；实际值受减耗及状态影响，基础非0时调整后最低为1"),
     ("trigger_prob",88, "抗性档位／被动参数", 'int', "主动技能：将低字节写入掩码指定状态的抗性；50/75/100有特殊分支，100禁止附加，并非任意百分比。被动技能：完整WORD作为反应参数，含义依原版反应编号而异，不统一代表触发概率"),
@@ -251,10 +251,11 @@ def save_skills(fp, recs):
 class SkillGraphView(QGraphicsView):
     """可缩放 / 拖拽平移的技能拓扑图视图 (滚轮缩放, 双击节点回调, 点阵网格背景)。"""
 
-    def __init__(self, on_node_double_clicked=None, is_dark=True):
+    def __init__(self, on_node_double_clicked=None, theme_id="gpt-dark"):
         super().__init__()
         self._on_dbl = on_node_double_clicked
-        self.is_dark = is_dark
+        self.theme_id = theme_id
+        self._pal = business_colors("skill_graph", theme_id)
         self.setRenderHints(QPainter.Antialiasing | QPainter.TextAntialiasing
                             | QPainter.SmoothPixmapTransform)
         self.setDragMode(QGraphicsView.ScrollHandDrag)
@@ -319,15 +320,16 @@ class SkillTreeDialog(QDialog):
     RADIUS = 12
     ACCENT_W = 12
 
-    def __init__(self, parent, records, tkt_dict, focus_idx, is_dark=True):
+    def __init__(self, parent, records, tkt_dict, focus_idx, theme_id="gpt-dark"):
         super().__init__(parent)
         self.records = records
         self.tkt_dict = tkt_dict
         self.focus_idx = focus_idx
-        self.is_dark = is_dark
+        self.theme_id = theme_id
+        self._pal = business_colors("skill_graph", theme_id)
         self._fitted = False
         self._mode = 'all'  # all=前置+解锁 · down=仅向下(解锁链) · up=仅向上(前置链)
-        self._show_group = True  # 是否显示权重20（另将源技能学习状态设为30）的关联
+        self._show_group = True  # 是否显示归组关联
 
         self.resize(920, 720)
         self._build_graph()
@@ -439,9 +441,9 @@ class SkillTreeDialog(QDialog):
         layout.addWidget(self.lbl_head)
 
         legend = QLabel(
-            "卡片左侧色条 = 技能类型: 蓝=指令 · 橙=属性 · 绿=反应 · 紫=移动。"
+            "卡片左侧色条 = 技能类型: 蓝=指令 · 橙=主动 · 绿=被动 · 紫=移动。"
             "箭头方向 = 前置 → 目标; 学会源技能后，仅对学习状态1..9的目标累加权重低字节 (+N)，累计 ≥10 可学。"
-            "权重20还将源技能状态设为30 (紫色虚线)，不表示所有引用都直接归组。"
+            "紫色虚线表示归组。"
             "节点右上徽标 = WarPC 技能学习表建议初始状态（非实际学习状态）: "
             "入口(绿)→可以学(10) · 下游(灰蓝)→等待学(1) · 组头(紫，连续子项数>0的指令)→等待学(1)。"
             "滚轮缩放 · 拖拽平移 · 双击节点重新聚焦。")
@@ -457,7 +459,7 @@ class SkillTreeDialog(QDialog):
         self.mode_box.currentIndexChanged.connect(self._on_mode_changed)
         mode_row.addWidget(self.mode_box)
         mode_row.addSpacing(16)
-        self.chk_group = QCheckBox("显示权重20关联")
+        self.chk_group = QCheckBox("显示归组")
         self.chk_group.setChecked(self._show_group)
         self.chk_group.toggled.connect(self._on_group_toggled)
         mode_row.addWidget(self.chk_group)
@@ -516,7 +518,7 @@ class SkillTreeDialog(QDialog):
         lines = [f"{name}  #{idx}  [{SKILL_TYPES.get(rec.get('type', 0), '')}]"]
         role, state, _ = self._seed_role(idx)
         lines.append(f"WarPC 建议初始状态: {role} → {state}")
-        lines.append("仅对学习状态1..9的目标累加权重低字节；权重20还将源技能状态设为30。")
+        lines.append("仅对学习状态1..9的目标累加进度；权重20会追加+20，并使源技能自动学会。")
         plist = self.parents.get(idx, [])
         if plist:
             lines.append("前置 (往上):")
@@ -536,7 +538,7 @@ class SkillTreeDialog(QDialog):
         bx, by = b_xy
         p1 = QPointF(ax + self.NODE_W / 2, ay + self.NODE_H)  # 前置底部中点
         p2 = QPointF(bx + self.NODE_W / 2, by)                # 解锁顶部中点
-        is_group = (w == 20)
+        is_group = (w == 20)  # 归组
         is_focus_edge = (a == self.focus_idx or b == self.focus_idx)
         if is_group:
             color = QColor(self._pal["edge_regroup"])   # 归组: 紫色
@@ -571,16 +573,22 @@ class SkillTreeDialog(QDialog):
                                       QPen(color, 1), QBrush(color))
         arrow.setZValue(3)
 
+    @staticmethod
+    def _weight_label(w):
+        if w == 20:
+            return "归组"
+        if (w & 0xFF) >= 10:
+            return "自足"
+        return f"+{w & 0xFF}"
+
     def _draw_edge_label(self, mid, w):
         if w == 20:
-            txt = "+20 / 源→30"
             fg, bg = (QColor(c) for c in self._pal["edge_label_regroup"])
         elif (w & 0xFF) >= 10:
-            txt = f"+{w & 0xFF}"
             fg, bg = (QColor(c) for c in self._pal["edge_label_self"])
         else:
-            txt = f"+{w & 0xFF}"
             fg, bg = (QColor(c) for c in self._pal["edge_label_plus"])
+        txt = self._weight_label(w)
         label = self.scene.addSimpleText(txt)
         f = label.font()
         f.setPointSize(8)
@@ -915,7 +923,7 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
             minimum_widths=[62, 72, 90, 112, 82, 84],
             row_height=44,
         )
-        self.table.setHorizontalHeaderLabels(['技能ID', '文本ID', '类型', '技能名称', '基础技点', '耗费内力'])
+        self.table.setHorizontalHeaderLabels(['技能ID', '文本ID', '类型', '技能名称', '学习技能点', '耗费内力'])
         self.table.setWordWrap(False)
         self.table.setTextElideMode(Qt.ElideRight)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -1370,7 +1378,7 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
         # 使用 HTML 富文本进行局部着色，完美保留 QSS 的边框与排版
         self.preview_type.setText(
             f'<span style="color: {type_color}; font-weight: bold;">【{stype}】</span> '
-            f'| 基础技点={rec["jp_cost"]} | 内力={rec["mp_cost"]} | {hint}'
+            f'| 学习技能点={rec["jp_cost"]} | 内力={rec["mp_cost"]} | {hint}'
         )
         self.preview_type.setToolTip(self.widget_map['trigger_prob'].toolTip())
         sc = rec.get('sub_count', -1)
@@ -1476,7 +1484,7 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
     def _pick_status(self, fn):
         base = 0 if fn == 'immunity1' else 16
         cur = int(self.widget_map[fn].text() or 0) & 0xFFFF
-        dlg = StatusPickerDialog(self, f"选择状态抗性掩码 ({base + 1}–{base + 16})",
+        dlg = StatusPickerDialog(self, f"选择状态抗性 ({base + 1}–{base + 16})",
                                  RESISTANCE_STATUS_NAMES, cur, base,
                                  self._get_icon_pixmap, False)
         for bit, cb in dlg.checkboxes:

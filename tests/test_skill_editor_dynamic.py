@@ -618,6 +618,35 @@ class SkillEditorFieldSemanticsTests(unittest.TestCase):
         self.assertIn("303..330", self.editor.preview_type.text())
         self.assertIn("不会自动生成", self.editor.preview_type.text())
 
+    def test_skill_tree_dialog_accepts_theme_id(self):
+        from skill_editor.skill_editor import SkillTreeDialog
+
+        for theme_id in ("gpt-dark", "gpt-light", "classic-dark", "classic-light"):
+            with self.subTest(theme_id=theme_id):
+                rec = blank_skill_record(0)
+                rec["skill_text_id"] = 1
+                dialog = SkillTreeDialog(None, [rec], {1: "测试技能"}, 0, theme_id)
+                try:
+                    self.assertEqual(dialog.theme_id, theme_id)
+                    self.assertEqual(dialog.view.theme_id, theme_id)
+                    self.assertIn("grid_dot", dialog._pal)
+                    self.assertIn("grid_dot", dialog.view._pal)
+                finally:
+                    dialog.close()
+                    dialog.deleteLater()
+                    self.app.processEvents()
+
+    def test_weight_20_edge_label_uses_plain_language(self):
+        from skill_editor.skill_editor import SkillTreeDialog
+
+        self.assertEqual(
+            SkillTreeDialog._weight_label(20),
+            "归组",
+        )
+        self.assertEqual(SkillTreeDialog._weight_label(10), "自足")
+        self.assertEqual(SkillTreeDialog._weight_label(0x105), "+5")
+        self.assertEqual(SkillTreeDialog._weight_label(5), "+5")
+
     def test_description_uses_independent_tkt_id_without_name_fallback(self):
         self.editor.tkt = {1: "技能名称"}
         self.editor.tkt_full = {401: "不能使用的名称推算说明", 900: "独立说明\n第二行"}
@@ -668,8 +697,8 @@ class SkillEditorFieldSemanticsTests(unittest.TestCase):
     def test_field_labels_and_hints_match_verified_engine_semantics(self):
         fields = {key: (offset, label, hint) for key, offset, label, _, hint in ALL_FIELDS}
         expected_labels = {
-            "move_up": (60, "移动力增量"), "atk_count": (62, "普攻次数增量"),
-            "immunity1": (68, "状态抗性掩码1–16"), "immunity2": (70, "状态抗性掩码17–32"),
+            "move_up": (60, "移动增加"), "atk_count": (62, "普攻次数增加"),
+            "immunity1": (68, "状态抗性1–16"), "immunity2": (70, "状态抗性17–32"),
             "magic_def": (76, "术法类伤害减免%"), "turn_shift": (84, "目标时序系数"),
             "trigger_prob": (88, "抗性档位／被动参数"),
             "sub_count": (90, "连续子项数／归组标记"), "atk_type": (92, "技能结算分支"),
@@ -685,8 +714,9 @@ class SkillEditorFieldSemanticsTests(unittest.TestCase):
             "turn_shift": ("260 - 目标速度", "负数：本值 × 目标速度", "实际伤害"),
             "atk_type": ("低字节+1", "0/1/2/11", "距离由TKKon", "0x04", "222", "224..231", "251", "不保证能召唤"),
             "magic_def": ("HP/MP", ">=2", "物品例外"),
-            "cost_gold": ("原版", "不限于"), "cost_res2": ("暂名兽元", "不限于"),
-            "cost_res3": ("暂名灵魂", "不限于"),
+            "cost_gold": ("原版", "不限于"),
+            "cost_res2": ("原版技能执行消耗的兽元", "不限于"),
+            "cost_res3": ("原版技能执行消耗的灵魂", "不限于"),
         }
         for key in ("atk_pct", "def_pct", "hit_pct", "eva_pct", "spd_pct"):
             expected_hints[key] = ("相对基础", "百分比")
@@ -780,7 +810,7 @@ class SkillEditorFieldSemanticsTests(unittest.TestCase):
         self.assertEqual(graph.total_in[2], 25)
         tooltip = SkillTreeDialog._node_tooltip(graph, 2)
         self.assertIn("1..9", tooltip)
-        self.assertIn("源技能状态设为30", tooltip)
+        self.assertIn("源技能自动学会", tooltip)
         self.assertIn("+5 (原值261)", tooltip)
         self.assertEqual(records[0]["ref_type0"], 0x105)
         self.assertEqual(records[1]["ref_type0"], 20)
