@@ -558,7 +558,7 @@ class SkillEditorFieldSemanticsTests(unittest.TestCase):
         self.app.processEvents()
 
     def test_settlement_choices_keep_explicit_numeric_values(self):
-        expected = {-1: "普攻式结算", 0: "非术法指令", 1: "术法指令", 10: "召唤分支"}
+        expected = {-1: "普通攻击", 0: "物理技能", 1: "法术技能", 10: "召唤术"}
         combo = self.editor.widget_map["atk_type"]
         self.assertEqual(combo.count(), len(expected))
         for value, label in expected.items():
@@ -700,8 +700,8 @@ class SkillEditorFieldSemanticsTests(unittest.TestCase):
             "move_up": (60, "移动增加"), "atk_count": (62, "普攻次数增加"),
             "immunity1": (68, "状态抗性1–16"), "immunity2": (70, "状态抗性17–32"),
             "magic_def": (76, "术法类伤害减免%"), "turn_shift": (84, "目标时序系数"),
-            "trigger_prob": (88, "抗性档位／被动参数"),
-            "sub_count": (90, "连续子项数／归组标记"), "atk_type": (92, "技能结算分支"),
+            "trigger_prob": (88, "触发概率"),
+            "sub_count": (90, "子技能数量"), "atk_type": (92, "攻击类型"),
         }
         for key, expected in expected_labels.items():
             self.assertEqual(fields[key][:2], expected)

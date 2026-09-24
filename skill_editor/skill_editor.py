@@ -84,7 +84,7 @@ SKILL_CNT = SKILL_ORIG_CNT  # backward-compatible name
 SKILL_MAX_CNT = GAME_SKILL_BASE + GAME_SKILL_CAPACITY
 SKILL_TYPES = {0: "指令技能", 1: "主动技能", 2: "被动技能", 3: "移动技能"}
 SKILL_TYPE_VALUES = [f"{k}-{v}" for k, v in sorted(SKILL_TYPES.items())]
-ATK_TYPE_VALUES = {-1: "普攻式结算", 0: "非术法指令", 1: "术法指令", 10: "召唤分支"}
+ATK_TYPE_VALUES = {-1: "普通攻击", 0: "物理技能", 1: "法术技能", 10: "召唤术"}
 
 # 状态第16/32位语义未明，不能当作空槽丢弃；仅在本编辑器内补全名称。
 RESISTANCE_STATUS_NAMES = [
@@ -108,7 +108,7 @@ BASIC_FIELDS = [
 TREE_FIELDS = []
 for i in range(8):
     TREE_FIELDS.append(("ref_skill%d" % i, 8 + i*4, f"目标技能{i}", 'skill_pick', "受影响的目标技能索引"))
-    TREE_FIELDS.append(("ref_type%d" % i, 10 + i*4, f"进度权重{i}", 'int', "学会源技能后，仅向学习状态为1..9的目标累加权重低字节，累计>=10可学；权重20还将源技能学习状态设为30，不是所有引用都直接归组"))
+    TREE_FIELDS.append(("ref_type%d" % i, 10 + i*4, f"技能进度{i}", 'int', "学会源技能后，仅向学习状态为1..9的目标累加权重低字节，累计>=10可学；权重20还将源技能学习状态设为30，不是所有引用都直接归组"))
 
 EFFECT_FIELDS = [
     ("timing", 40, "行动时序值", 'int', "加入累计行动值，原版再按阈值和技能特判换算；不是毫秒延迟"),
@@ -141,9 +141,9 @@ ADVANCED_FIELDS = [
     ("cost_res3", 82, "耗费灵魂", 'int', "原版技能执行消耗的灵魂，不限于幻灵技能"),
     ("turn_shift", 84, "目标时序系数", 'int', "正数：本值 × (260 - 目标速度)；负数：本值 × 目标速度；伤害路径还检查实际伤害，并非仅对敌人的固定时序偏移"),
     ("mp_cost", 86, "耗费内力", 'int', "基础内力消耗；实际值受减耗及状态影响，基础非0时调整后最低为1"),
-    ("trigger_prob",88, "抗性档位／被动参数", 'int', "主动技能：将低字节写入掩码指定状态的抗性；50/75/100有特殊分支，100禁止附加，并非任意百分比。被动技能：完整WORD作为反应参数，含义依原版反应编号而异，不统一代表触发概率"),
-    ("sub_count", 90, "连续子项数／归组标记", 'int', "0=顶层直接执行；正数N=展开后续N条；-1=非组头归组/学习恢复标记，不能作为顶层独立指令（原版会空展开）；类型0不一定是组头"),
-    ("atk_type", 92, "技能结算分支", 'atk_type', "原版读取低字节+1得到运行类别0/1/2/11，对应-1/0/1/10；距离由TKKon另定，物理命中/防御由TKKon执行标志0x04另定。10仅有原版编号222、224..231、251等召唤分发支持，新增技能仅改10不保证能召唤；未知16位值原样保留"),
+    ("trigger_prob",88, "触发概率", 'int', "主动技能：将低字节写入掩码指定状态的抗性；50/75/100有特殊分支，100禁止附加，并非任意百分比。被动技能：完整WORD作为反应参数，含义依原版反应编号而异，不统一代表触发概率"),
+    ("sub_count", 90, "子技能数量", 'int', "0=顶层直接执行；正数N=展开后续N条；-1=非组头归组/学习恢复标记，不能作为顶层独立指令（原版会空展开）；类型0不一定是组头"),
+    ("atk_type", 92, "攻击类型", 'atk_type', "原版读取低字节+1得到运行类别0/1/2/11，对应-1/0/1/10；距离由TKKon另定，物理命中/防御由TKKon执行标志0x04另定。10仅有原版编号222、224..231、251等召唤分发支持，新增技能仅改10不保证能召唤；未知16位值原样保留"),
 ]
 
 ALL_FIELDS = (BASIC_FIELDS + EFFECT_FIELDS + IMMUNE_FIELDS + list(ADVANCED_FIELDS) + TREE_FIELDS)
@@ -188,7 +188,7 @@ TYPE_HINT_LABELS = {
     1: "主动技能: 装备后的属性加成与状态抗性，不代表战斗菜单中可主动施放",
     2: "被动技能: 由原版编号303..330等选择反应；参数依编号而异，新增类型2不会自动生成任意反应",
     3: "移动技能: 移动力增量、移动回复与特殊标志；飙行提供额外移动机会而非增加范围",
-    0: "指令技能: 按连续子项数决定执行方式；类型0不一定是组头",
+    0: "指令技能: 按子技能数决定执行方式；类型0不一定是组头",
 }
 
 def skill_name(rec, tkt):
@@ -445,7 +445,7 @@ class SkillTreeDialog(QDialog):
             "箭头方向 = 前置 → 目标; 学会源技能后，仅对学习状态1..9的目标累加权重低字节 (+N)，累计 ≥10 可学。"
             "紫色虚线表示归组。"
             "节点右上徽标 = WarPC 技能学习表建议初始状态（非实际学习状态）: "
-            "入口(绿)→可以学(10) · 下游(灰蓝)→等待学(1) · 组头(紫，连续子项数>0的指令)→等待学(1)。"
+            "入口(绿)→可以学(10) · 下游(灰蓝)→等待学(1) · 组头(紫，子技能数>0的指令)→等待学(1)。"
             "滚轮缩放 · 拖拽平移 · 双击节点重新聚焦。")
         legend.setWordWrap(True)
         legend.setProperty("class", "PropLabel")
@@ -607,7 +607,7 @@ class SkillTreeDialog(QDialog):
 
     def _seed_role(self, idx):
         """按 warpc 播种规则给出该技能在角色技能学习表中的建议初始状态:
-        组头(连续子项数>0的指令技能) → 等待学(1);
+        组头(子技能数>0的指令技能) → 等待学(1);
         入口(无任何前置) → 可以学(10);
         下游(有前置)   → 等待学(1, 满足进度条件后可学习)。
         徽标底色为深饱和色 (配白字保证明暗对比), 三色区分明显; 深浅主题一致。"""
@@ -1003,7 +1003,7 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
         self._build_field_group("效果加成 (主动／移动技能)", EFFECT_FIELDS, 4)
         self._build_field_group("状态抗性／战后加成／消耗", IMMUNE_FIELDS, 4)
         self._build_field_group("高级属性／被动技能参数／指令结算", ADVANCED_FIELDS, 4)
-        self._build_field_group("技能树引用表 (8组: 目标/进度权重)", TREE_FIELDS, 4)
+        self._build_field_group("技能树引用表 (8组: 目标/技能进度)", TREE_FIELDS, 4)
 
         self.edit_layout.addStretch()
         scroll.setWidget(self.edit_inner)
@@ -1394,7 +1394,7 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
         elif sc == -1:
             self.preview_sub.setText("非组头归组／学习恢复标记：不能作为顶层独立指令（原版会空展开）。")
         else:
-            self.preview_sub.setText(f"连续子项数／归组标记：未知值 {sc}，保留原值。")
+            self.preview_sub.setText(f"子技能数：未知值 {sc}，保留原值。")
 
         for fn, fo, fl, ft, _ in ALL_FIELDS:
             val = rec.get(fn, 0)
