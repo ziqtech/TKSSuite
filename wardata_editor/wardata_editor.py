@@ -27,7 +27,7 @@ WarData.dat 格式 (每条498字节, 219条, flat binary — sub_42FDF8):
                                 18对X,Y(int8), X=106+2*i, Y=107+2*i
   [142-177] byte[36] enemy_xy — sub_431428:94-98 grid coords(18 pairs int8 X,Y); War.dll"敌人朝向"
   [178-189] byte[12] ally_xy  — sub_431428:74 unk_95388A; 6对X,Y(int8), 同enemy_xy格式
-  [190-207] byte[18] enemy_del — sub_4307CC:242 v9[102]; sub_444FD4:61; War.dll标签"属性加成"
+  [190-207] byte[18] enemy_delay — 敌方朝向: 0=随机, 1..4=四方向; sub_4307CC:242 / sub_444FD4:61
   [208-213] byte[6] ally_facing — War.dll标签"我方朝向"; 6个友军朝向值(byte)
   [214-269] byte[56] trap_xy  — sub_431428:204 (char*)v43-172/-171; 28组陷阱/宝物坐标(int8对, 共享)
   [270-325] byte[56] trap_pwr — sub_431428:296 (char*)v45-116/-115; 28组陷阱威力(min,max) byte
@@ -1262,7 +1262,7 @@ class WarDataEditorV2(EditorMainWindow):
             "  [34-69] 敌方角色 (最多18个)\n"
             "  [70-87] 敌方等级        [88-105] 敌方强化值\n"
             "  [106-141] 等级波动范围  [142-177] 敌方坐标\n"
-            "  [190-207] 敌方出场延迟  [442-477] 敌方标志\n\n"
+            "  [190-207] 敌方朝向 (0随机, 1~4四方向)  [442-477] 敌方标志\n\n"
             "我方配置:\n"
             "  [178-189] 我方坐标      [208-213] 我方朝向\n\n"
             "陷阱与宝箱:\n"
@@ -1944,7 +1944,8 @@ class WarDataEditorV2(EditorMainWindow):
             minimum_widths=[64, 64, 64, 64, 64, 64, 64, 75, 64],
         )
         tbl.setMinimumHeight(350)
-        tbl.setHorizontalHeaderLabels(["ID\nu16\n034-069","Lv\nu8\n070-087","加成\nu8\n088-105","LvP1\ni8\n106-141","LvP2\ni8\n106-141","X\ni8\n142-177","Y\ni8\n142-177","时序Delay\nu8\n190-207","标志\nu16\n442-477"])
+        tbl.setHorizontalHeaderLabels(["ID\nu16\n034-069","Lv\nu8\n070-087","加成\nu8\n088-105","LvP1\ni8\n106-141","LvP2\ni8\n106-141","X\ni8\n142-177","Y\ni8\n142-177","朝向\nu8\n190-207","标志\nu16\n442-477"])
+        tbl.horizontalHeaderItem(7).setToolTip("0=随机朝向；1~4=四个方向；5~127会导致形象取帧越界；128~255按有符号负值也走随机。不是出场延迟")
         self.ap_enemy_table = tbl
         bl_enemy.addWidget(tbl)
         gl_enemy.addWidget(body_enemy)
@@ -2252,7 +2253,8 @@ class WarDataEditorV2(EditorMainWindow):
             stretch_columns={2, 10},
             minimum_widths=[30, 60, 180, 45, 70, 45, 45, 35, 35, 55, 70],
         )
-        tbl.setHorizontalHeaderLabels(["槽","角色ID","角色名","等级","加成倍率","LvP1","LvP2","X","Y","Delay","特殊设定"])
+        tbl.setHorizontalHeaderLabels(["槽","角色ID","角色名","等级","加成倍率","LvP1","LvP2","X","Y","朝向","特殊设定"])
+        tbl.horizontalHeaderItem(9).setToolTip("0=随机朝向；1~4=四个方向；5~127会导致形象取帧越界；128~255按有符号负值也走随机。不是出场延迟")
         self.enemy_table = tbl
         self.enemy_name_labels = []
         for i in range(18):

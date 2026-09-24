@@ -82,63 +82,68 @@ SKILL_REC = 94
 SKILL_ORIG_CNT = 350
 SKILL_CNT = SKILL_ORIG_CNT  # backward-compatible name
 SKILL_MAX_CNT = GAME_SKILL_BASE + GAME_SKILL_CAPACITY
-SKILL_TYPES = {0: "指令技能", 1: "主动技能", 2: "被动技能", 3: "移动技能"}
+SKILL_TYPES = {0: "指令技能", 1: "属性技能", 2: "反应技能", 3: "移动技能"}
 SKILL_TYPE_VALUES = [f"{k}-{v}" for k, v in sorted(SKILL_TYPES.items())]
-ATK_TYPE_VALUES = ["-1-近战攻击", "0-物理攻击", "1-术法攻击", "10-召唤攻击"]
+ATK_TYPE_VALUES = {-1: "普攻式结算", 0: "非术法指令", 1: "术法指令", 10: "召唤分支"}
 
-# STATUS_NAMES / STATUS_ICON_BASE 由 editor_utils.picker_dialogs 提供 (本地别名见下方导入)
+# 状态第16/32位语义未明，不能当作空槽丢弃；仅在本编辑器内补全名称。
+RESISTANCE_STATUS_NAMES = [
+    STATUS_NAMES[i] if i < len(STATUS_NAMES) and i not in (15, 31)
+    else f"未知状态位 {i + 1}"
+    for i in range(32)
+]
 
 SPECIAL_FLAG_BITS = [
-    (0, "飘浮", "地形通行无阻"), (1, "飙行", "移动范围扩大"),
-    (2, "搜宝", "获得额外宝物"), (3, "解陷", "自动解除陷阱"),
+    (0, "飘浮", "避开陷阱"), (1, "飙行", "额外移动机会"),
+    (2, "搜宝", "检查沿途宝物"), (3, "解陷", "处理沿途陷阱"),
 ]
 
 BASIC_FIELDS = [
     ("skill_text_id", 0, "名称文本ID", 'tkt', "技能名称 TKT 文本ID"),
-    ("skill_desc_id", 2, "说明文本ID", 'tkt', "技能说明 TKT 文本ID (独立字段; 当前数据中多数=name+400, 但引擎直接读取此值, 不做加法)"),
-    ("type", 4, "技能类型", 'type', "0=指令 1=主动 2=被动 3=移动"),
-    ("jp_cost", 6, "技能点数", 'int', "学习技能基础点数; 实际消耗 = jp_cost * (250 - 角色当前悟性) / 200 (sub_41E248)"),
+    ("skill_desc_id", 2, "说明文本ID", 'tkt', "技能说明的独立 TKT 文本ID；原版直接读取此值，不由名称文本ID推算"),
+    ("type", 4, "技能类型", 'type', "0=指令 1=属性（装备加成，非主动施放） 2=反应（由原版技能编号选择反应） 3=移动；新增类型2不会自动生成任意反应"),
+    ("jp_cost", 6, "学习基础技点", 'int', "学习技能基础技点；实际消耗 = 基础技点 * (250 - 角色当前悟性) / 200 (sub_41E248)"),
 ]
 
 TREE_FIELDS = []
 for i in range(8):
     TREE_FIELDS.append(("ref_skill%d" % i, 8 + i*4, f"目标技能{i}", 'skill_pick', "受影响的目标技能索引"))
-    TREE_FIELDS.append(("ref_type%d" % i, 10 + i*4, f"技能进度{i}", 'int', "累加进度权重(>=10可学), 20=归组"))
+    TREE_FIELDS.append(("ref_type%d" % i, 10 + i*4, f"进度权重{i}", 'int', "学会源技能后，仅向学习状态为1..9的目标累加权重低字节，累计>=10可学；权重20还将源技能学习状态设为30，不是所有引用都直接归组"))
 
 EFFECT_FIELDS = [
-    ("timing", 40, "时序值Delay", 'int', "技能行动时序值"),
-    ("hp_pct", 42, "生命加成%", 'int', "HP%加成"),
-    ("heal_move", 44, "移步回血%", 'int', "自癒1=2 自癒2=3"),
-    ("mp_pct", 46, "内力加成%", 'int', "MP%加成"),
-    ("mp_move", 48, "移步回气%", 'int', "回气1=2 回气2=3"),
-    ("atk_pct", 50, "攻击加成%", 'int', "攻击%加成"),
-    ("def_pct", 52, "防御加成%", 'int', "防御%加成"),
-    ("hit_pct", 54, "命中加成%", 'int', "命中%加成"),
-    ("eva_pct", 56, "闪避加成%", 'int', "闪避%加成"),
-    ("spd_pct", 58, "速度加成%", 'int', "速度%加成"),
-    ("move_up", 60, "增加移动", 'int', "移动+1=2, 移动+2=3"),
-    ("atk_count", 62, "增攻次数", 'int', "二連=2 三連=3"),
-    ("special_flags",64,"特殊标志", 'flags', "飘浮/飙行等掩码"),
+    ("timing", 40, "行动时序值", 'int', "加入累计行动值，原版再按阈值和技能特判换算；不是毫秒延迟"),
+    ("hp_pct", 42, "生命上限加成%", 'int', "生命上限百分比加成，不是当前生命回复"),
+    ("heal_move", 44, "移步回血%", 'int', "移动回复生命 = 起终点曼哈顿距离 × 生命上限 × 本值 / 100，不按实际途经格数计算"),
+    ("mp_pct", 46, "内力上限加成%", 'int', "内力上限百分比加成，不是当前内力回复"),
+    ("mp_move", 48, "移步回气%", 'int', "移动回复内力 = 起终点曼哈顿距离 × 内力上限 × 本值 / 100，不按实际途经格数计算"),
+    ("atk_pct", 50, "攻击加成%", 'int', "相对基础攻击的百分比加成"),
+    ("def_pct", 52, "防御加成%", 'int', "相对基础防御的百分比加成"),
+    ("hit_pct", 54, "命中加成%", 'int', "相对基础命中的百分比加成"),
+    ("eva_pct", 56, "闪避加成%", 'int', "相对基础闪避的百分比加成"),
+    ("spd_pct", 58, "速度加成%", 'int', "相对基础速度的百分比加成"),
+    ("move_up", 60, "移动力增量", 'int', "直接增加移动力：1=+1，2=+2"),
+    ("atk_count", 62, "普攻次数增量", 'int', "基础普攻次数为1：1=二连，2=三连；实际执行还受技能/反应限制"),
+    ("special_flags",64,"特殊标志", 'flags', "飘浮=避开陷阱；飙行=额外移动机会；搜宝=检查沿途宝物；解陷=处理沿途陷阱；保留未知高位"),
     ("mp_reduce", 66, "内息消耗减%", 'int', "施展指令技能内息减少%"),
 ]
 
 IMMUNE_FIELDS = [
-    ("immunity1", 68, "状态免疫 1-16", 'mask', "状态免疫位掩码 (状态 1-16)"),
-    ("immunity2", 70, "状态免疫 17-32", 'mask', "状态免疫位掩码 (状态 17-32)"),
+    ("immunity1", 68, "状态抗性掩码1–16", 'mask', "选择状态1–16的抗性写入位置，配合抗性档位（offset88）使用，勾选不等于免疫；未知第16位保留原值"),
+    ("immunity2", 70, "状态抗性掩码17–32", 'mask', "选择状态17–32的抗性写入位置，配合抗性档位（offset88）使用，勾选不等于免疫；未知第32位保留原值"),
     ("exp_bonus", 72, "战后经验增加%", 'int', "战斗经验值增加% (鬼才)"),
     ("jp_bonus", 74, "战后技点增加%", 'int', "战斗技能点增加% (天才)"),
-    ("magic_def", 76, "所受法伤减少%", 'int', "减少法术伤害% (抗魔)"),
-    ("cost_gold", 78, "消耗金钱", 'int', "技能消耗金钱"),
-    ("cost_res2", 80, "耗费兽元", 'int', "召唤技能兽元消耗"),
+    ("magic_def", 76, "术法类伤害减免%", 'int', "减少术法类HP/MP伤害；按运行类别>=2及物品例外处理，不是单凭TKKon物理执行标志判断"),
+    ("cost_gold", 78, "消耗金钱", 'int', "原版技能执行消耗的金钱，不限于召唤或幻灵技能"),
+    ("cost_res2", 80, "耗费兽元", 'int', "原版技能执行消耗的第二资源（暂名兽元），不限于召唤技能"),
 ]
 
 ADVANCED_FIELDS = [
-    ("cost_res3", 82, "耗费灵魂", 'int', "幻灵技能灵魂消耗"),
-    ("turn_shift", 84, "调整时序", 'int', "敌人行动时序偏移"),
-    ("mp_cost", 86, "耗费内力", 'int', "技能消耗内力值"),
-    ("trigger_prob",88, "触发概率", 'int', "状态免疫等级/被动技能触发概率"),
-    ("sub_count", 90, "子技能数量", 'int', "技能组头子技能数 (-1=独立)"),
-    ("atk_type", 92, "攻击类型", 'atk_type', "攻击伤害类别 (-1近战 0物理 1术法 10召唤)"),
+    ("cost_res3", 82, "耗费灵魂", 'int', "原版技能执行消耗的第三资源（暂名灵魂），不限于幻灵技能"),
+    ("turn_shift", 84, "目标时序系数", 'int', "正数：本值 × (260 - 目标速度)；负数：本值 × 目标速度；伤害路径还检查实际伤害，并非仅对敌人的固定时序偏移"),
+    ("mp_cost", 86, "耗费内力", 'int', "基础内力消耗；实际值受减耗及状态影响，基础非0时调整后最低为1"),
+    ("trigger_prob",88, "抗性档位／反应参数", 'int', "属性技能：将低字节写入掩码指定状态的抗性；50/75/100有特殊分支，100禁止附加，并非任意百分比。反应技能：完整WORD作为反应参数，含义依原版反应编号而异，不统一代表触发概率"),
+    ("sub_count", 90, "连续子项数／归组标记", 'int', "0=顶层直接执行；正数N=展开后续N条；-1=非组头归组/学习恢复标记，不能作为顶层独立指令（原版会空展开）；类型0不一定是组头"),
+    ("atk_type", 92, "技能结算分支", 'atk_type', "原版读取低字节+1得到运行类别0/1/2/11，对应-1/0/1/10；距离由TKKon另定，物理命中/防御由TKKon执行标志0x04另定。10仅有原版编号222、224..231、251等召唤分发支持，新增技能仅改10不保证能召唤；未知16位值原样保留"),
 ]
 
 ALL_FIELDS = (BASIC_FIELDS + EFFECT_FIELDS + IMMUNE_FIELDS + list(ADVANCED_FIELDS) + TREE_FIELDS)
@@ -180,10 +185,10 @@ def clear_warpc_extension_skill_slots(records):
 
 
 TYPE_HINT_LABELS = {
-    1: "主动技能: 百分比属性加成 → 角色战斗属性",
-    2: "被动技能: 触发概率 → 角色反应系统",
-    3: "移动技能: 特殊标志 + 移动能力 → 角色地图能力",
-    0: "指令技能: 技能组根节点, 含子技能列表",
+    1: "属性技能: 装备后的属性加成与状态抗性，非主动施放",
+    2: "反应技能: 由原版编号303..330等选择反应；参数依编号而异，新增类型2不会自动生成任意反应",
+    3: "移动技能: 移动力增量、移动回复与特殊标志；飙行提供额外移动机会而非增加范围",
+    0: "指令技能: 按连续子项数决定执行方式；类型0不一定是组头",
 }
 
 def skill_name(rec, tkt):
@@ -302,9 +307,9 @@ class SkillTreeDialog(QDialog):
     以节点-连线拓扑图呈现, 而非整张关系网。
 
     技能树引用表语义 (逆向 sub_41E248):
-      源技能.ref_skill[i] = 目标技能索引; 源技能.ref_type[i] = 学会该源技能后累加给目标的进度权重。
-      目标累计进度 ≥10 即可学习; 权重 10 = 自足解锁; 20 = 归组标记。
-      因此 A→B 表示 A 是 B 的前置, B 是学会 A 后可解锁的技能; 箭头由前置指向解锁。
+      源技能.ref_skill[i] = 目标技能索引; 学会源技能后，仅对学习状态1..9的目标累加ref_type低字节。
+      目标累计进度 ≥10 即可学习; 权重20还将源技能学习状态设为30，并非所有引用都直接归组。
+      A→B 表示 A 对 B 的学习进度贡献；静态图不代表角色当前已经满足学习条件。
     """
 
     NODE_W = 190
@@ -322,7 +327,7 @@ class SkillTreeDialog(QDialog):
         self.is_dark = is_dark
         self._fitted = False
         self._mode = 'all'  # all=前置+解锁 · down=仅向下(解锁链) · up=仅向上(前置链)
-        self._show_group = True  # 是否显示归组(ref_type==20)关系
+        self._show_group = True  # 是否显示权重20（另将源技能学习状态设为30）的关联
 
         self.resize(920, 720)
         self._build_graph()
@@ -349,7 +354,7 @@ class SkillTreeDialog(QDialog):
                     continue
                 self.children.setdefault(a, []).append((b, w, i))
                 self.parents.setdefault(b, []).append((a, w, i))
-                self.total_in[b] = self.total_in.get(b, 0) + w
+                self.total_in[b] = self.total_in.get(b, 0) + (w & 0xFF)
 
     # ── 关联范围: 仅当前技能自身的技能链 (向上全部前置 + 向下全部解锁) ──
     def _reach(self, start, adj):
@@ -434,10 +439,11 @@ class SkillTreeDialog(QDialog):
         layout.addWidget(self.lbl_head)
 
         legend = QLabel(
-            "卡片左侧色条 = 技能类型: 蓝=指令 · 橙=主动 · 绿=被动 · 紫=移动。"
-            "箭头方向 = 前置 → 解锁; 连线标签为累加进度权重 (+N), 目标累计 ≥10 或标注 [自足] 即可学习, "
-            "[归组] 为技能组标记 (紫色虚线)。节点右上徽标 = WarPC 技能学习表建议初始状态: "
-            "入口(绿)→可以学(10) · 下游(灰蓝)→等待学(1) · 组头(紫)→等待学(1)。"
+            "卡片左侧色条 = 技能类型: 蓝=指令 · 橙=属性 · 绿=反应 · 紫=移动。"
+            "箭头方向 = 前置 → 目标; 学会源技能后，仅对学习状态1..9的目标累加权重低字节 (+N)，累计 ≥10 可学。"
+            "权重20还将源技能状态设为30 (紫色虚线)，不表示所有引用都直接归组。"
+            "节点右上徽标 = WarPC 技能学习表建议初始状态（非实际学习状态）: "
+            "入口(绿)→可以学(10) · 下游(灰蓝)→等待学(1) · 组头(紫，连续子项数>0的指令)→等待学(1)。"
             "滚轮缩放 · 拖拽平移 · 双击节点重新聚焦。")
         legend.setWordWrap(True)
         legend.setProperty("class", "PropLabel")
@@ -451,7 +457,7 @@ class SkillTreeDialog(QDialog):
         self.mode_box.currentIndexChanged.connect(self._on_mode_changed)
         mode_row.addWidget(self.mode_box)
         mode_row.addSpacing(16)
-        self.chk_group = QCheckBox("显示归组")
+        self.chk_group = QCheckBox("显示权重20关联")
         self.chk_group.setChecked(self._show_group)
         self.chk_group.toggled.connect(self._on_group_toggled)
         mode_row.addWidget(self.chk_group)
@@ -510,17 +516,18 @@ class SkillTreeDialog(QDialog):
         lines = [f"{name}  #{idx}  [{SKILL_TYPES.get(rec.get('type', 0), '')}]"]
         role, state, _ = self._seed_role(idx)
         lines.append(f"WarPC 建议初始状态: {role} → {state}")
+        lines.append("仅对学习状态1..9的目标累加权重低字节；权重20还将源技能状态设为30。")
         plist = self.parents.get(idx, [])
         if plist:
             lines.append("前置 (往上):")
             for (a, w, _i) in plist:
-                lines.append(f"  · {skill_name(self.records[a], self.tkt_dict)} #{a} → {w:+d}")
-            lines.append(f"  前置合计 {self.total_in.get(idx, 0)} (≥10 可学习)")
+                lines.append(f"  · {skill_name(self.records[a], self.tkt_dict)} #{a} → +{w & 0xFF} (原值{w})")
+            lines.append(f"  潜在进度合计 {self.total_in.get(idx, 0)} (实际累计≥10可学习，非当前角色状态)")
         clist = self.children.get(idx, [])
         if clist:
             lines.append("解锁 (往下):")
             for (b, w, _i) in clist:
-                lines.append(f"  · {skill_name(self.records[b], self.tkt_dict)} #{b} → {w:+d}")
+                lines.append(f"  · {skill_name(self.records[b], self.tkt_dict)} #{b} → +{w & 0xFF} (原值{w})")
         return "\n".join(lines)
 
     # ── 绘制 ──
@@ -566,13 +573,13 @@ class SkillTreeDialog(QDialog):
 
     def _draw_edge_label(self, mid, w):
         if w == 20:
-            txt = "归组"
+            txt = "+20 / 源→30"
             fg, bg = (QColor(c) for c in self._pal["edge_label_regroup"])
-        elif w >= 10:
-            txt = "自足"
+        elif (w & 0xFF) >= 10:
+            txt = f"+{w & 0xFF}"
             fg, bg = (QColor(c) for c in self._pal["edge_label_self"])
         else:
-            txt = f"+{w}"
+            txt = f"+{w & 0xFF}"
             fg, bg = (QColor(c) for c in self._pal["edge_label_plus"])
         label = self.scene.addSimpleText(txt)
         f = label.font()
@@ -592,9 +599,9 @@ class SkillTreeDialog(QDialog):
 
     def _seed_role(self, idx):
         """按 warpc 播种规则给出该技能在角色技能学习表中的建议初始状态:
-        组头(指令技能) → 等待学(1, 学会成员后自动升级);
+        组头(连续子项数>0的指令技能) → 等待学(1);
         入口(无任何前置) → 可以学(10);
-        下游(有前置)   → 等待学(1, 学会前置后自动解锁)。
+        下游(有前置)   → 等待学(1, 满足进度条件后可学习)。
         徽标底色为深饱和色 (配白字保证明暗对比), 三色区分明显; 深浅主题一致。"""
         rec = self.records[idx]
         if rec.get('type', 0) == 0 and rec.get('sub_count', -1) > 0:
@@ -774,8 +781,8 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
         "数据: 原版 350 条 × 94 字节；支持追加扩展技能\n\n"
         "特性:\n"
         "  · Godot 4.6 级别布局与纯净控件约束\n"
-        "  · 分页编辑: 基础/效果/免疫/进阶/技能树\n"
-        "  · 自动关联 TKT.dat 显示技能名称\n"
+        "  · 分组编辑: 基础/效果/抗性/进阶/技能树\n"
+        "  · 按独立文本ID关联 TKT.dat 显示技能名称与说明\n"
         "  · 每行右键: 复制 / 粘贴 / 清除 / 删除 / 查看技能树\n"
         "  · 原版技能只能清除；扩展技能可删除")
 
@@ -908,7 +915,7 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
             minimum_widths=[62, 72, 90, 112, 82, 84],
             row_height=44,
         )
-        self.table.setHorizontalHeaderLabels(['技能ID', '文本ID', '类型', '技能名称', '技能点数', '耗费内力'])
+        self.table.setHorizontalHeaderLabels(['技能ID', '文本ID', '类型', '技能名称', '基础技点', '耗费内力'])
         self.table.setWordWrap(False)
         self.table.setTextElideMode(Qt.ElideRight)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -985,10 +992,10 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
 
         # Properties (No wireframes, Godot inspector grid alignment)
         self._build_field_group("基础属性", BASIC_FIELDS, 4)
-        self._build_field_group("效果加成 (主动技能核心)", EFFECT_FIELDS, 4)
-        self._build_field_group("状态免疫", IMMUNE_FIELDS, 4)
-        self._build_field_group("高级属性", ADVANCED_FIELDS, 4)
-        self._build_field_group("技能树引用表 (8组: 目标/进度)", TREE_FIELDS, 4)
+        self._build_field_group("效果加成 (属性／移动技能)", EFFECT_FIELDS, 4)
+        self._build_field_group("状态抗性／战后加成／消耗", IMMUNE_FIELDS, 4)
+        self._build_field_group("高级属性／反应参数／指令结算", ADVANCED_FIELDS, 4)
+        self._build_field_group("技能树引用表 (8组: 目标/进度权重)", TREE_FIELDS, 4)
 
         self.edit_layout.addStretch()
         scroll.setWidget(self.edit_inner)
@@ -1079,13 +1086,8 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
 
         elif ft == 'type' or ft == 'atk_type':
             cb = EditorComboBox()
-            values = (
-                sorted(SKILL_TYPES.items())
-                if ft == 'type'
-                else [(-1, "近战攻击"), (0, "物理攻击"),
-                      (1, "术法攻击"), (10, "召唤攻击")]
-            )
-            for value, label in values:
+            values = SKILL_TYPES if ft == 'type' else ATK_TYPE_VALUES
+            for value, label in sorted(values.items()):
                 cb.addItem(f"{value}-{label}", value)
             cell.addWidget(make_fake_input(combo=cb))
             self.widget_map[fn] = cb
@@ -1094,7 +1096,8 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
             inp = QLineEdit()
             inp.setVisible(False)
 
-            btn = QPushButton("配置免疫状态" if ft == 'mask' else "配置特殊标志")
+            btn = QPushButton("配置状态抗性" if ft == 'mask' else "配置特殊标志")
+            btn.setToolTip(f"[{fo:02d}] {cmt}")
             if ft == 'mask':
                 btn.setObjectName("StatusPickerButton")
             btn.setCursor(Qt.PointingHandCursor)
@@ -1125,6 +1128,7 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
             cell.addWidget(make_fake_input(line_edit=inp))
             self.widget_map[fn] = inp
 
+        self.widget_map[fn].setToolTip(f"[{fo:02d}] {cmt}")
         grid.addLayout(cell, row, col, Qt.AlignTop)
 
     def _toggle_theme(self):
@@ -1355,10 +1359,7 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
         # 加上前缀增加仪式感，空名称处理也更加优雅
         self.preview_name.setText(n_txt.split('\n')[0].strip() if n_txt else "未命名技能")
 
-        did = nid + 400
-        d_txt = self.tkt_full.get(did, "") if did > 0 else ""
-        # 改用 setText，因为组件已经换成了 QLabel
-        self.preview_desc.setText(d_txt if d_txt else "暂无关于该技能的详细描述。")
+        self._update_desc_preview(rec.get('skill_desc_id', 0))
 
         hint = TYPE_HINT_LABELS.get(rec['type'], "")
 
@@ -1369,20 +1370,23 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
         # 使用 HTML 富文本进行局部着色，完美保留 QSS 的边框与排版
         self.preview_type.setText(
             f'<span style="color: {type_color}; font-weight: bold;">【{stype}】</span> '
-            f'| 点数={rec["jp_cost"]} | 内力={rec["mp_cost"]} | {hint}'
+            f'| 基础技点={rec["jp_cost"]} | 内力={rec["mp_cost"]} | {hint}'
         )
+        self.preview_type.setToolTip(self.widget_map['trigger_prob'].toolTip())
         sc = rec.get('sub_count', -1)
-        if sc >= 0:
-            sub_txt = f"子技能: {sc} 个 (ID {rec['index']+1} - {rec['index']+sc})"
+        if sc > 0:
+            sub_txt = f"连续子项: {sc} 个 (ID {rec['index']+1} - {rec['index']+sc})"
             if sc > 12:
-                # 战斗技能菜单共享 12 格固定数组 (word_9D6D1A, memset 0x18=24B=12项),
-                # sub_438F28 列出本组已学子技能时无越界检查 → 超过12个即溢出相邻数据。
                 sub_txt += (f'<br><span style="color:{SUB_OVERFLOW_COLOR}; font-weight:bold;">'
-                            '⚠ 当前技能组的子技能数超过12个，请注意在编辑角色时设置当前技能组的'
-                            '可学习技能不要超过12个，否则战斗页面数据会溢出</span>')
+                            '原版战斗菜单最多12项；本组同时已学子技能（学习状态≥20）超过12个会越界，'
+                            '当前扩展补丁会限制列入数量；不是限制可学习（状态10）的技能数。</span>')
             self.preview_sub.setText(sub_txt)
+        elif sc == 0:
+            self.preview_sub.setText("直接技能：作为顶层指令时直接执行，不展开后续子项。")
+        elif sc == -1:
+            self.preview_sub.setText("非组头归组／学习恢复标记：不能作为顶层独立指令（原版会空展开）。")
         else:
-            self.preview_sub.setText("")
+            self.preview_sub.setText(f"连续子项数／归组标记：未知值 {sc}，保留原值。")
 
         for fn, fo, fl, ft, _ in ALL_FIELDS:
             val = rec.get(fn, 0)
@@ -1420,17 +1424,26 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
                 else:
                     self.extra_map[fn].setText("")
 
+    def _update_desc_preview(self, did):
+        txt = self.tkt_full.get(did, "") if did > 0 else ""
+        self.preview_desc.setText(txt if txt else "暂无关于该技能的详细描述。")
+        self.preview_desc.setToolTip(f"说明文本ID={did}；独立 TKT 编号，不由名称文本ID推算。")
+
     def _update_mask_label(self, fn, mask):
         base = 0 if fn == 'immunity1' else 16
         sel = []
         for i in range(16):
-            if mask & (1 << i) and base + i < len(STATUS_NAMES):
-                sel.append(STATUS_NAMES[base + i])
-        self.extra_map[fn].setText(", ".join(sel) if sel else "(无)")
+            if mask & (1 << i):
+                sel.append(RESISTANCE_STATUS_NAMES[base + i])
+        self.extra_map[fn].setText("抗性状态: " + (", ".join(sel) if sel else "(无)"))
+        self.extra_map[fn].setToolTip(self.widget_map['trigger_prob'].toolTip())
 
     def _update_flags_label(self, fn, val):
         mask = val & 0xFFFF
         sel = [name for bit, name, _ in SPECIAL_FLAG_BITS if mask & (1 << bit)]
+        unknown = mask & ~sum(1 << bit for bit, _, _ in SPECIAL_FLAG_BITS)
+        if unknown:
+            sel.append(f"未知位 0x{unknown:04X}")
         self.extra_map[fn].setText(", ".join(sel) if sel else "(无)")
 
     def _pick_tkt(self, fn):
@@ -1442,6 +1455,7 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
             t = txt.split('\n')[0] if txt else ""
             self.extra_map[fn].setText((t[:8] + '...') if len(t) > 8 else t)
             if fn == 'skill_text_id': self.preview_name.setText(txt.split('\n')[0].strip() if txt else "(无)")
+            elif fn == 'skill_desc_id': self._update_desc_preview(dlg.selected_id)
 
     def _pick_skill(self, fn):
         if not self.records: return
@@ -1462,13 +1476,20 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
     def _pick_status(self, fn):
         base = 0 if fn == 'immunity1' else 16
         cur = int(self.widget_map[fn].text() or 0) & 0xFFFF
-        # 15=第二个"连计": 仅用于分隔数据的空值槽位, 弹窗内直接移除
-        dlg = StatusPickerDialog(self, "选择免疫状态 (位掩码)", STATUS_NAMES,
-                                 cur, base, self._get_icon_pixmap, False,
-                                 hidden_slots={15})
+        dlg = StatusPickerDialog(self, f"选择状态抗性掩码 ({base + 1}–{base + 16})",
+                                 RESISTANCE_STATUS_NAMES, cur, base,
+                                 self._get_icon_pixmap, False)
+        for bit, cb in dlg.checkboxes:
+            cb.setText(f"{base + bit + 1}. {RESISTANCE_STATUS_NAMES[base + bit]}")
+            if bit == 15:
+                cb.setEnabled(False)
+                cb.setToolTip("此状态位语义未明，保留原值，不随全选/全清修改。")
+                cb.toggled.connect(lambda _, box=cb: box.setChecked(bool(cur & 0x8000)))
         if dlg.exec() == QDialog.Accepted and dlg.selected_mask is not None:
-            self.widget_map[fn].setText(str(dlg.selected_mask))
-            self._update_mask_label(fn, dlg.selected_mask & 0xFFFF)
+            mask = (dlg.selected_mask & 0x7FFF) | (cur & 0x8000)
+            value = mask if mask < 0x8000 else mask - 0x10000
+            self.widget_map[fn].setText(str(value))
+            self._update_mask_label(fn, mask)
 
     def _pick_flags(self, fn):
         cur = int(self.widget_map[fn].text() or 0) & 0xFFFF
@@ -1484,11 +1505,12 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
             layout.addWidget(cb)
 
         btn_layout = QHBoxLayout()
-        btn_clear = QPushButton("全清")
+        btn_clear = QPushButton("清除已知标志")
+        btn_clear.setToolTip("仅清除已知四位，保留未知高位。")
         btn_clear.clicked.connect(lambda: [cb.setChecked(False) for _, cb in checkboxes])
         btn_ok = QPushButton("确定")
         def _ok():
-            m = 0
+            m = cur & ~sum(1 << bit for bit, _, _ in SPECIAL_FLAG_BITS)
             for bit, cb in checkboxes:
                 if cb.isChecked(): m |= (1 << bit)
             if m >= 0x8000: m -= 0x10000
@@ -1541,6 +1563,7 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
             if int(self.table.item(r, 0).text()) == rec['index']:
                 self.table.selectRow(r)
                 break
+        self._populate_edit(rec)
         self.status_var.setText(f"记录 #{rec['index']} 已修改 (内存)")
 
     @staticmethod

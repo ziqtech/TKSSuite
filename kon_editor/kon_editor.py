@@ -60,26 +60,26 @@ KON_DECOMPRESSED = 26000
 # STATUS_NAMES 由 editor_utils.picker_dialogs 提供 (见上方导入)
 
 KON_FIELDS = [
-    ("exec_mode",        0,  "执行模式",      "高字节=攻击距离(负=自身, 0=单格, 1-3=近战, 6+=远程); 低字节=范围开关"),
-    ("target_param",     2,  "目标参数",      "高字节=效果面积(0=单体, 1+=菱形层数, -1/FF=全场, -2/FE=全场排除自身); 低字节=扩散开关"),
-    ("target_filter",    4,  "目标过滤",      "高字节=目标格子(0=全部, 1=仅角色, 2=仅空地); 低字节=阵营匹配(0=对立, 1=同阵营, 2=任意)"),
-    ("tkact_id",         6,  "TKAct动画索引", "TKAct.dat 条目索引 (0..649, -1=无)"),
-    ("hp_damage",        8,  "生命伤害",      "(-1)=ATK; (0)=无; (1~999)=固定; (1001~1999)=目标生命%; (2001~2999)=ATK+; (3001+)=ATK×"),
-    ("mp_damage",       10,  "内力伤害",      "(0)=无; (1~999)=固定内力伤; (1001~1999)=目标内力%"),
-    ("accuracy",        12,  "附加命中",      "命中率加算值"),
-    ("extra_damage",    14,  "附加伤害",      "附加伤害值 (极少使用)"),
-    ("hp_restore",      16,  "生命回复",      "(0)=无; (1~999)=固定回复; (1001~1999)=最大生命%; 仅生命<25%时触发"),
-    ("mp_restore",      18,  "内力回复",      "(0)=无; (1~999)=固定回复; (1001~1999)=最大内力%; 仅内力<25%时触发"),
-    ("inflict_status_lo", 20, "导致状态1-16",  "施加状态位掩码低16位"),
-    ("inflict_status_hi", 22, "导致状态17-32", "施加状态位掩码高16位"),
-    ("remove_status_lo",  24, "解除状态1-16",  "移除状态位掩码低16位"),
-    ("remove_status_hi",  26, "解除状态17-32", "移除状态位掩码高16位"),
-    ("timing_mod",      28,  "时序修正",      "行动顺序修正值"),
-    ("unused15",        30,  "未使用15",      "始终为0"),
-    ("unused16",        32,  "未使用16",      "始终为0"),
-    ("unused17",        34,  "未使用17",      "始终为0"),
-    ("unused18",        36,  "未使用18",      "始终为0"),
-    ("exec_flags",      38,  "执行标志",      "bit0=显示待机, bit1=物品, bit2=物理; 0=法术"),
+    ("exec_mode",        0,  "选点范围",      "高字节为有符号距离：负数以自身位置为中心免选点，0为中心格，正数为菱形半径；低字节0扩展、非0仅中心。不是近战/远程类型编码"),
+    ("target_param",     2,  "作用范围",      "高字节为有符号半径：0仅中心，正数向外扩散，负数全场，-2排除目标中心格（不一定是施法者）；低字节0扩散、非0仅中心。原版目标坐标(0,0)也走全场分支"),
+    ("target_filter",    4,  "目标过滤",      "高字节限制可选中心格：0全部、1仅角色、2仅空地；低字节0对立、1同阵营、2任意。作用阶段只收集角色，另有原版状态/技能编号特判"),
+    ("tkact_id",         6,  "TKAct动画索引", "原版0..649（含0）；-1继承施法者普攻效果的动画，普攻效果为0时取全局默认；扩展索引需对应资源及补丁"),
+    ("hp_damage",        8,  "生命伤害参数",  "0无；-1取攻击力（原版技能编号有特判）；1..1000固定基础值；1001..2000为目标当前生命的(值-1000)%；2001..3000为攻击力+(值-2000)；>3000为攻击力×[1+(值-3000)/100]，非最终伤害"),
+    ("mp_damage",       10,  "内力伤害参数",  "0无；1..1000固定基础值；>1000为目标当前内力的(值-1000)%，仍受命中和结算分支影响"),
+    ("accuracy",        12,  "附加命中",      "物理判定中的命中加算项，不是最终命中率；未启用物理位时不按此项计算普通命中"),
+    ("extra_damage",    14,  "保留参数14",    "尚未确认原版用途，不能认定为附加伤害；保留原始数值"),
+    ("hp_restore",      16,  "生命回复参数",  "0无；1..1000固定回复；>1000为目标生命上限的(值-1000)%。实际执行在生命未满时回复并封顶；低于25%是AI收益评估条件，不是实际回复门槛"),
+    ("mp_restore",      18,  "内力回复参数",  "0无；1..1000固定回复；>1000为目标内力上限的(值-1000)%。实际执行在内力未满时回复并封顶；低于25%仅影响AI收益评估"),
+    ("inflict_status_lo", 20, "施加状态1-16",  "施加状态掩码低16位；实际附加仍受概率、抗性和状态槽限制"),
+    ("inflict_status_hi", 22, "施加状态17-32", "施加状态掩码高16位；未确认状态位保留原值，不承诺其效果"),
+    ("remove_status_lo",  24, "解除状态1-16",  "状态解除队列的低16位掩码"),
+    ("remove_status_hi",  26, "解除状态17-32", "状态解除队列的高16位掩码；未确认状态位保留原值"),
+    ("timing_mod",      28,  "目标行动计时增量", "直接加到各作用目标的行动计时器，正值推迟、负值提前；不同于技能表偏移84的速度相关系数"),
+    ("unused15",        30,  "保留参数30",    "原版用途未确认，按原始值保留"),
+    ("unused16",        32,  "保留参数32",    "原版用途未确认，按原始值保留"),
+    ("unused17",        34,  "保留参数34",    "原版用途未确认，按原始值保留"),
+    ("unused18",        36,  "保留参数36",    "原版用途未确认，按原始值保留"),
+    ("exec_flags",      38,  "执行标志",      "bit0控制待机/特效绘制，bit1进入当前物品效果结算（必须有使用物品上下文），bit2启用物理命中及防御判定；未设bit2不等同于术法结算分支"),
 ]
 
 ACTIVE_FIELDS = [f for f in KON_FIELDS if not f[0].startswith('unused')]
@@ -88,80 +88,87 @@ ACTIVE_FIELDS = [f for f in KON_FIELDS if not f[0].startswith('unused')]
 # 描述解析函数
 # ============================================================
 
-def describe_exec_mode(val):
-    if val < 0: return "自身目标"
+STATUS_BIT_NAMES = [
+    STATUS_NAMES[i] if i < len(STATUS_NAMES) and i not in (15, 31)
+    else f"未知状态位 {i + 1}"
+    for i in range(32)
+]
+
+
+def _signed_high_byte(val):
     hi = (val >> 8) & 0xFF
-    lo = val & 0xFF
-    if hi == 0 and lo == 0: return "单格"
-    parts = []
-    range_text = "" if lo == 0 else "[范围禁用]"
-    if hi > 0: parts.append(f"距离={hi}格")
-    parts.append(range_text)
-    return "  ".join(parts)
+    return hi - 256 if hi >= 128 else hi
+
+
+def _select_byte_value(combo, value, label):
+    index = combo.findData(value)
+    if index < 0:
+        combo.addItem(label, value)
+        index = combo.count() - 1
+    combo.setCurrentIndex(index)
+
+
+def describe_exec_mode(val):
+    hi = _signed_high_byte(val)
+    if hi < 0: return "自身中心，免选点"
+    if hi == 0: return "中心格"
+    if val & 0xFF: return f"仅中心（范围关闭，原值{val & 0xFF}）"
+    return f"菱形半径{hi}"
+
 
 def describe_target_param(val):
-    if val < 0:
-        hi = (val >> 8) & 0xFF
-        if hi == 255: return "全场目标"
-        elif hi == 254: return "全场(排除自身)"
-        return f"特殊({val})"
-    hi = (val >> 8) & 0xFF
-    lo = val & 0xFF
-    if hi == 0 and lo == 0: return "无扩散(单体)"
-    spread_text = "" if lo == 0 else "[扩散禁用]"
-    parts = []
-    if hi > 0: parts.append(f"面积={hi}格")
-    parts.append(spread_text)
-    return "  ".join(parts)
+    hi = _signed_high_byte(val)
+    if hi == -2: return "全场（排除目标中心）"
+    if hi < 0: return "全场目标"
+    if hi == 0: return "仅目标中心"
+    if val & 0xFF: return f"仅中心（扩散关闭，原值{val & 0xFF}）"
+    return f"菱形半径{hi}"
+
 
 def describe_target_filter(val):
     lo = val & 0xFF
     hi = (val >> 8) & 0xFF
-    target_map = {0: "全部", 1: "仅角色", 2: "仅空地"}
+    target_map = {0: "任意中心格", 1: "角色中心格", 2: "空地中心格"}
     faction_map = {0: "对立阵营", 1: "同阵营", 2: "任意阵营"}
-    return f"{target_map.get(hi, f'目标{hi}')}  {faction_map.get(lo, f'阵营{lo}')}"
+    return f"{target_map.get(hi, f'未确认格子值{hi}')}  {faction_map.get(lo, f'未确认阵营值{lo}')}"
+
 
 def describe_exec_flags(val):
-    lo = val & 0xFF
-    parts = ["显示待机" if (lo & 1) else "隐藏待机"]
-    if lo & 2: parts.append("物品")
-    parts.append("物理" if (lo & 4) else "法术")
+    parts = ["待机/特效绘制" if (val & 1) else "未设绘制位"]
+    if val & 2: parts.append("当前物品结算")
+    parts.append("物理判定" if (val & 4) else "非物理判定")
+    if val & 0xFFF8: parts.append(f"未确认位0x{val & 0xFFF8:04X}")
     return "  ".join(parts)
 
-def describe_hp_damage(val):
-    if val == -1: return "单位攻击力"
-    if val == 0: return "无伤害"
-    if 1 <= val <= 999: return f"固定伤害={val}"
-    if 1001 <= val <= 1999: return f"生命%伤害={val - 1000}%"
-    if 2001 <= val <= 2999: return f"攻击力+{val - 2000}"
-    if val >= 3001: return f"攻击力×{100 + val - 3000}%"
-    return f"特殊({val})"
 
-def describe_resource_val(val, resource_name):
+def describe_hp_damage(val):
+    if val == -1: return "攻击力（原版技能另有特判）"
+    if val == 0: return "无生命伤害"
+    if 1 <= val <= 1000: return f"固定基础值={val}"
+    if 1001 <= val <= 2000: return f"目标当前生命×{val - 1000}%"
+    if 2001 <= val <= 3000: return f"攻击力+{val - 2000}"
+    if val > 3000: return f"攻击力×{100 + val - 3000}%"
+    return f"原始参数({val})"
+
+
+def describe_resource_val(val, resource_name, percent_base):
     if val == 0: return f"无{resource_name}"
-    if 1 <= val <= 999: return f"固定{resource_name}={val}"
-    if 1001 <= val <= 1999: return f"{resource_name}%={val - 1000}%"
-    return f"{resource_name}=({val})"
+    if 1 <= val <= 1000: return f"固定{resource_name}={val}"
+    if val > 1000: return f"{percent_base}×{val - 1000}%"
+    return f"原始{resource_name}参数({val})"
+
 
 def kon_record_name(rec, tkt, resolver=None, compact_threshold=0):
     idx = rec['index']
     if resolver:
         name = resolver.get_name(idx, compact_threshold)
-        if name and not name.startswith('空槽-') and not name.startswith('动画#'):
+        if name and not name.startswith(('空槽-', '动画#')):
             return name
+    if not any(rec.get(fn, 0) for fn, _, _, _ in KON_FIELDS):
+        return f"全零记录-#{idx}"
     cid = rec.get('tkact_id', 0)
-    parts = []
-    em = rec.get('exec_mode', 0)
-    tp = rec.get('target_param', 0)
-    if em < 0: parts.append("自身")
-    elif em != 0:
-        rh = (em >> 8) & 0xFF
-        if rh > 0: parts.append(f"距{rh}")
-    tp_hi = (tp >> 8) & 0xFF
-    if tp_hi > 0: parts.append(f"面{tp_hi}")
-    desc = " ".join(parts) if parts else ""
-    if cid > 0: return f"动画#{cid} {desc}".strip()
-    return f"空槽-#{idx}"
+    animation = "继承普攻动画" if cid == -1 else f"动画#{cid}"
+    return f"{animation} {describe_exec_mode(rec.get('exec_mode', 0))} / {describe_target_param(rec.get('target_param', 0))}"
 
 def load_kon(fp):
     with open(fp, 'rb') as f:
@@ -239,20 +246,16 @@ def _build_field_ref_text():
     lines.append("  field[0-2] 是战斗引擎操作参数，非TKT文本引用")
     lines.append("【字段详情】")
     for fn, fo, fl, cmt in KON_FIELDS:
-        marker = " ● 未使用" if fn.startswith('unused') else ""
-        lines.append(f"  [{fo:02d}] {fl:<10s}{marker}")
+        lines.append(f"  [{fo:02d}] {fl:<10s}")
         lines.append(f"       {cmt}")
     lines.append("")
-    lines.append("【字段功能说明】")
-    lines.append("  [0-2]: 战斗操作参数 (目标区域/验证/伤害)")
-    lines.append("  [3-5]: 动画播放参数")
-    lines.append("  [6-9]: 显示效果 (特效/音效/画面)")
-    lines.append("  [10-19]: 伤害与状态参数")
-    lines.append("")
-    lines.append("【伤害字段编码规则】")
-    for s in ["0→无效果","1~999→固定值","1001~1999→最大值%(val-1000)",
-               "-1→ATK","2001~2999→ATK+(val-2000)","3001+→ATK×(1+(val-3000)/100)"]:
-        lines.append(f"  {s}")
+    lines.append("【原版结算说明】")
+    lines.append("  字段偏移以字节计；生命/内力伤害的百分比取目标当前值，回复百分比取目标上限。")
+    lines.append("  数值预览是基础参数，不包含命中、防御、状态、技能编号特判等最终修正。")
+    lines.append("  低于25%是AI对回复收益的评估条件；实际回复在未满时生效，不受25%限制。")
+    lines.append("  执行标志不是互斥技能类型；物理位与技能表的结算分支是不同字段。")
+    lines.append("  原版技能60/178可排除作用中心，242会改写阵营和伤害/回复；这些是技能编号而非本表记录号。")
+    lines.append("  依据: sub_43D53C、sub_43D8B0、sub_4434BC、sub_4400DC、sub_4432EC；AI评分另见sub_43E980。")
     return '\n'.join(lines)
 
 # ============================================================
@@ -265,13 +268,13 @@ class KonEditor(FieldUndoMixin, EditorMainWindow):
     MIN_SIZE = (1050, 650)
 
     HELP_TEXT = (
-        "功能: 编辑《三国群侠传》技能动画数据\n"
+        "功能: 编辑《三国群侠传》战斗效果数据\n"
         "数据: 每条 20 个字段 × 16位整数\n"
         "      原版 650 条 × 40 字节 = 26,000 字节\n"
         "      新建条目在列表末尾新增空记录；>650 为扩展记录，需扩容补丁\n\n"
         "特性:\n"
         "  · Godot 风格深/浅色主题切换\n"
-        "  · 技能动画参数可视化编辑\n"
+        "  · 选点、作用范围、伤害、回复与状态参数编辑\n"
         "  · 伤害字段编码规则说明\n"
         "  · 每行右键: 复制 / 粘贴 / 清除；扩展记录另有删除\n"
         "  · 原版记录只能清除；扩展记录可清除或删除")
@@ -367,7 +370,7 @@ class KonEditor(FieldUndoMixin, EditorMainWindow):
         toolbar.addWidget(btn_clear)
         toolbar.addSpacing(8)
 
-        self.chk_show_empty = QCheckBox("显示空槽")
+        self.chk_show_empty = QCheckBox("显示全零记录")
         self.chk_show_empty.setChecked(True)
         self.chk_show_empty.stateChanged.connect(self._apply_filter)
         toolbar.addWidget(self.chk_show_empty)
@@ -444,7 +447,7 @@ class KonEditor(FieldUndoMixin, EditorMainWindow):
             minimum_widths=[46, 52, 52, 96, 72, 70, 72, 54],
             row_height=44,
         )
-        self.table.setHorizontalHeaderLabels(["序号", "动画", "距离", "名称", "范围", "伤害", "目标", "类型"])
+        self.table.setHorizontalHeaderLabels(["序号", "动画", "选点", "名称", "作用范围", "伤害参数", "目标", "执行标志"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -498,9 +501,9 @@ class KonEditor(FieldUndoMixin, EditorMainWindow):
         # 字段组 — Dock 风格分组 (列数: 4, 4, 5, 5)
         self._build_field_group("战斗执行参数 (offset 0–6)", ACTIVE_FIELDS[:4], 4)
         self._build_field_group("伤害/回复参数 (offset 8–18)", ACTIVE_FIELDS[4:10], 4)
-        self._build_field_group("状态位掩码 (offset 20–28)", ACTIVE_FIELDS[10:15], 4)
-        # 执行标志
+        self._build_field_group("状态与行动计时 (offset 20–28)", ACTIVE_FIELDS[10:15], 4)
         self._build_field_group("执行标志 (offset 38)", [KON_FIELDS[-1]], 1)
+        self._build_field_group("未确认参数（只读保留，offset 30–36）", KON_FIELDS[15:19], 4)
 
         self.edit_layout.addStretch()
         scroll.setWidget(edit_container)
@@ -562,12 +565,12 @@ class KonEditor(FieldUndoMixin, EditorMainWindow):
             h = QHBoxLayout(row_w)
             h.setContentsMargins(0, 0, 0, 0)
             h.setSpacing(4)
-            cb0 = QCheckBox("显示待机动画")
-            cb0.setToolTip("显示施法者待机动画 (bit0)")
-            cb1 = QCheckBox("使用物品")
-            cb1.setToolTip("物品触发逻辑 (bit1)")
+            cb0 = QCheckBox("待机/特效绘制")
+            cb0.setToolTip("控制施法者待机及目标特效绘制 (bit0)，不是Buff或自身目标类型")
+            cb1 = QCheckBox("物品效果结算")
+            cb1.setToolTip("从当前使用的物品取效果参数 (bit1)，必须有有效物品上下文；普通技能勿启用")
             cb2 = QCheckBox("物理攻击")
-            cb2.setToolTip("物理伤害公式 (bit2)")
+            cb2.setToolTip("启用物理命中及防御判定 (bit2)；与技能表的结算分支不同")
             h.addWidget(cb0)
             h.addWidget(cb1)
             h.addWidget(cb2)
@@ -584,7 +587,10 @@ class KonEditor(FieldUndoMixin, EditorMainWindow):
             hi_w.setValidator(QIntValidator(-128, 127))
             hi_w.setFixedWidth(48)
             lo_w = EditorComboBox()
-            lo_w.addItems(["启用", "禁用"])
+            lo_w.addItem("扩展（0）", 0)
+            lo_w.addItem("仅中心（1）", 1)
+            lo_w.setToolTip("低字节0向外扩展，非0关闭扩展但保留中心；高字节为0或负数时有原版特殊分支")
+            hi_w.setToolTip(cmt)
             box = QFrame()
             box.setObjectName("FakeInputBox")
             bh = QHBoxLayout(box)
@@ -594,7 +600,7 @@ class KonEditor(FieldUndoMixin, EditorMainWindow):
                 hi_label = "距离"
                 lo_label = "范围"
             elif fn == 'target_param':
-                hi_label = "面积"
+                hi_label = "半径"
                 lo_label = "扩散"
             else:
                 hi_label = ""
@@ -618,9 +624,13 @@ class KonEditor(FieldUndoMixin, EditorMainWindow):
 
         elif is_filter:
             hi_w = EditorComboBox()
-            hi_w.addItems(["全部", "仅角色", "仅空地"])
+            for value, label in enumerate(("全部", "仅角色", "仅空地")):
+                hi_w.addItem(label, value)
             lo_w = EditorComboBox()
-            lo_w.addItems(["对立阵营", "同阵营", "任意阵营"])
+            for value, label in enumerate(("对立阵营", "同阵营", "任意阵营")):
+                lo_w.addItem(label, value)
+            hi_w.setToolTip(cmt)
+            lo_w.setToolTip(cmt)
             box = QFrame()
             box.setObjectName("FakeInputBox")
             bh = QHBoxLayout(box)
@@ -818,7 +828,7 @@ class KonEditor(FieldUndoMixin, EditorMainWindow):
                 color = QColor("#CC3333")  # 阶段 2 豁免: 状态领域色 (红)
             elif "未知" in nm:
                 color = QColor("#CC8800")  # 阶段 2 豁免: 状态领域色 (橙)
-            elif "空槽" in nm:
+            elif "全零记录" in nm:
                 color = QColor("#888888") if getattr(self, '_is_dark', True) else QColor("#AAAAAA")  # 主题感知: 深浅两档
             elif r['tkact_id'] == -1:
                 color = QColor("#2266CC")  # 阶段 2 豁免: 状态领域色 (蓝)
@@ -827,47 +837,24 @@ class KonEditor(FieldUndoMixin, EditorMainWindow):
             else:
                 color = QColor("#AAAAAA") if getattr(self, '_is_dark', True) else QColor("#999999")  # 主题感知: 深浅两档
 
-            em = r['exec_mode'] & 0xFFFF
-            em_hi = (em >> 8) & 0xFF
-            if em_hi >= 128: dist_str = "自身"
-            elif em_hi == 0: dist_str = "单格"
-            else: dist_str = f"{em_hi}格"
+            dist_str = describe_exec_mode(r['exec_mode'])
+            area_str = describe_target_param(r['target_param'])
+            dmg_str = describe_hp_damage(r['hp_damage'])
 
-            tp = r['target_param'] & 0xFFFF
-            tp_hi = (tp >> 8) & 0xFF
-            if tp_hi == 255: area_str = "全场"
-            elif tp_hi == 254: area_str = "排除自身"
-            elif tp_hi > 0: area_str = f"{tp_hi}格"
-            else: area_str = "单体"
-
-            db = r['hp_damage']
-            if db == -1: dmg_str = "攻击力"
-            elif db == 0: dmg_str = "-"
-            elif 1001 <= db <= 1999: dmg_str = f"{db-1000}%"
-            elif 2001 <= db <= 2999: dmg_str = f"攻+{db-2000}"
-            elif db >= 3001: dmg_str = f"攻×{100+db-3000}%"
-            else: dmg_str = str(db)
-
-            tf_val = r['target_filter']
-            tf_lo = tf_val & 0xFF
-            tf_hi = (tf_val >> 8) & 0xFF
-            faction_map = {0: "敌", 1: "友", 2: "任意"}
-            target_map = {0: "", 1: "仅人", 2: "仅地"}
-            tf_str = f"{faction_map.get(tf_lo, '?')}{target_map.get(tf_hi, '')}"
-
-            ef = r['exec_flags'] & 0xFF
-            ef_str = "物理" if (ef & 4) else "法术"
+            tf_str = describe_target_filter(r['target_filter'])
+            ef_str = describe_exec_flags(r['exec_flags'])
 
             vals = [str(r['index']), str(r['tkact_id']), dist_str,
-                    nm if nm else f"(空-#{idx})", area_str, dmg_str, tf_str, ef_str]
-            sort_keys = [r['index'], r['tkact_id'], (em >> 8) & 0xFF,
-                         None, (tp >> 8) & 0xFF, r['hp_damage'],
-                         r['target_filter'], r['exec_flags'] & 0xFF]
+                    nm, area_str, dmg_str, tf_str, ef_str]
+            sort_keys = [r['index'], r['tkact_id'], _signed_high_byte(r['exec_mode']),
+                         None, _signed_high_byte(r['target_param']), r['hp_damage'],
+                         r['target_filter'], r['exec_flags'] & 0xFFFF]
 
             self.table.insertRow(row)
             for c_col, v in enumerate(vals):
                 item = NumericTableItem(v)
                 item.setData(Qt.UserRole, sort_keys[c_col])
+                item.setToolTip(v)
                 item.setForeground(color)
                 if c_col in (0, 1): item.setTextAlignment(Qt.AlignCenter)
                 self.table.setItem(row, c_col, item)
@@ -894,45 +881,43 @@ class KonEditor(FieldUndoMixin, EditorMainWindow):
         tp = rec.get('target_param', 0)
 
         # 预览面板
-        self.preview_name.setText(nm if nm else "空槽")
+        self.preview_name.setText(nm)
         info_parts = []
         em_desc = describe_exec_mode(em)
-        if em_desc and em_desc != "单格": info_parts.append(f"攻击={em_desc}")
+        info_parts.append(f"选点={em_desc}")
         tp_desc = describe_target_param(tp)
-        if tp_desc and tp_desc != "无扩散(单体)": info_parts.append(f"效果={tp_desc}")
-        tf_val = rec.get('target_filter', 0)
-        if tf_val: info_parts.append(describe_target_filter(tf_val))
+        info_parts.append(f"作用={tp_desc}")
+        info_parts.append(describe_target_filter(rec.get('target_filter', 0)))
         db = rec.get('hp_damage', 0)
         if db: info_parts.append(f"伤害={describe_hp_damage(db)}")
         mpd = rec.get('mp_damage', 0)
-        if mpd: info_parts.append(f"内伤={describe_resource_val(mpd, '内力伤害')}")
+        if mpd: info_parts.append(f"内伤={describe_resource_val(mpd, '内力伤害', '目标当前内力')}")
         hr = rec.get('hp_restore', 0)
-        if hr: info_parts.append(f"回复={describe_resource_val(hr, '生命回复')}")
+        if hr: info_parts.append(f"回复={describe_resource_val(hr, '生命回复', '目标生命上限')}")
         mr = rec.get('mp_restore', 0)
-        if mr: info_parts.append(f"回内={describe_resource_val(mr, '内力回复')}")
-        ef_val = rec.get('exec_flags', 0)
-        if ef_val: info_parts.append(describe_exec_flags(ef_val))
-        self.preview_desc.setText(" | ".join(info_parts) if info_parts else "(空动作)")
+        if mr: info_parts.append(f"回内={describe_resource_val(mr, '内力回复', '目标内力上限')}")
+        for key, label in (('inflict_status_lo', '施加'), ('inflict_status_hi', '施加'),
+                           ('remove_status_lo', '解除'), ('remove_status_hi', '解除')):
+            base = 0 if key.endswith('_lo') else 16
+            names = [STATUS_BIT_NAMES[base + bit] for bit in range(16)
+                     if rec.get(key, 0) & (1 << bit)]
+            if names: info_parts.append(f"{label}=" + '、'.join(names))
+        self.preview_desc.setText(" | ".join(info_parts))
 
-        # 类型元数据
-        ef = rec.get('exec_flags', 0) & 0xFF
-        if ef & 4: type_str = "物理攻击"
-        elif ef & 2: type_str = "物品使用"
-        elif ef & 1: type_str = "Buff/自身"
-        else: type_str = "法术攻击"
         timing = rec.get('timing_mod', 0)
+        animation = "继承普攻动画" if cid == -1 else f"动画ID={cid}"
         self.preview_type.setText(
-            f"【{type_str}】 | 动画ID={cid} | 命中+{rec.get('accuracy', 0)} | 附加伤={rec.get('extra_damage', 0)}"
-            + (f" | 时序{timing:+d}" if timing else "")
+            f"{describe_exec_flags(rec.get('exec_flags', 0))} | {animation} | 附加命中={rec.get('accuracy', 0)}"
+            + (f" | 目标行动计时{timing:+d}" if timing else "")
         )
-        self.preview_sub.setText("")
+        self.preview_sub.setText("以上为基础参数；最终效果还受技能结算分支、命中、防御、状态及原版编号特判影响")
 
         # 填充字段
         _dmg_desc = {
             'hp_damage': describe_hp_damage,
-            'mp_damage': lambda v: describe_resource_val(v, '内力伤害'),
-            'hp_restore': lambda v: describe_resource_val(v, '生命回复'),
-            'mp_restore': lambda v: describe_resource_val(v, '内力回复'),
+            'mp_damage': lambda v: describe_resource_val(v, '内力伤害', '目标当前内力'),
+            'hp_restore': lambda v: describe_resource_val(v, '生命回复', '目标生命上限'),
+            'mp_restore': lambda v: describe_resource_val(v, '内力回复', '目标内力上限'),
         }
         _split_desc = {
             'exec_mode': describe_exec_mode,
@@ -964,16 +949,12 @@ class KonEditor(FieldUndoMixin, EditorMainWindow):
             lo = val & 0xFF
             if fn not in self.split_map: continue
             w1, w2 = self.split_map[fn]
-            if fn == 'exec_mode':
-                if hi >= 128: hi -= 256
-                w1.setText(str(hi))
-                w2.setCurrentIndex(0 if lo == 0 else 1)
-            elif fn == 'target_param':
-                w1.setText(str(hi))
-                w2.setCurrentIndex(0 if lo == 0 else 1)
-            elif fn == 'target_filter':
-                w1.setCurrentIndex(hi if hi < 3 else 0)
-                w2.setCurrentIndex(lo if lo < 3 else 0)
+            if fn == 'target_filter':
+                _select_byte_value(w1, hi, f"未确认格子值{hi}")
+                _select_byte_value(w2, lo, f"未确认阵营值{lo}")
+            else:
+                w1.setText(str(_signed_high_byte(val)))
+                _select_byte_value(w2, lo, f"仅中心（原值{lo}）")
 
         # exec_flags 复选框
         if 'exec_flags' in self.split_map:
@@ -992,9 +973,8 @@ class KonEditor(FieldUndoMixin, EditorMainWindow):
         base = 0 if fn.endswith('_lo') else 16
         inf = fn.startswith('inflict')
         title = "选择导致状态 (位掩码)" if inf else "选择解除状态 (位掩码)"
-        # 15=第二个"连计": 仅用于分隔数据的空值槽位, 弹窗内直接移除
-        dlg = StatusPickerDialog(self, title, STATUS_NAMES, cur, base,
-                                 self._get_icon_pixmap, inf, hidden_slots={15})
+        dlg = StatusPickerDialog(self, title, STATUS_BIT_NAMES, cur, base,
+                                 self._get_icon_pixmap, inf)
         if dlg.exec() == QDialog.Accepted and dlg.selected_mask is not None:
             new_mask = dlg.selected_mask
             self.widget_map[fn].setText(str(new_mask))
@@ -1014,8 +994,8 @@ class KonEditor(FieldUndoMixin, EditorMainWindow):
             frame_layout = QVBoxLayout(frame)
             frame_layout.setContentsMargins(0, 0, 0, 0)
             frame_layout.setSpacing(1)
-        sel = [f"{base+i}.{STATUS_NAMES[base+i]}" for i in range(16)
-               if (mask & (1 << i)) and base + i < len(STATUS_NAMES)]
+        sel = [f"{base+i}.{STATUS_BIT_NAMES[base+i]}" for i in range(16)
+               if mask & (1 << i)]
         if sel:
             COLS = 3
             for si, nm in enumerate(sel):
@@ -1052,10 +1032,15 @@ class KonEditor(FieldUndoMixin, EditorMainWindow):
                 w1, w2 = self.split_map[fn]
                 try:
                     if fn == 'target_filter':
-                        hi, lo = w1.currentIndex(), w2.currentIndex()
+                        hi, lo = w1.currentData(), w2.currentData()
                     else:
-                        hi = int(w1.text()) & 0xFF
-                        lo = 0 if w2.currentIndex() == 0 else 1
+                        hi_value = int(w1.text())
+                        if not -128 <= hi_value <= 127:
+                            continue
+                        hi = hi_value & 0xFF
+                        lo = w2.currentData()
+                    if hi is None or lo is None:
+                        continue
                     combined = (hi << 8) | lo
                     if combined >= 0x8000: combined -= 0x10000
                     rec[fn] = combined
@@ -1065,8 +1050,9 @@ class KonEditor(FieldUndoMixin, EditorMainWindow):
         # exec_flags
         if 'exec_flags' in self.split_map:
             cb0, cb1, cb2 = self.split_map['exec_flags']
-            lo = (1 if cb0.isChecked() else 0) | (2 if cb1.isChecked() else 0) | (4 if cb2.isChecked() else 0)
-            rec['exec_flags'] = lo
+            flags = rec['exec_flags'] & 0xFFF8
+            flags |= (1 if cb0.isChecked() else 0) | (2 if cb1.isChecked() else 0) | (4 if cb2.isChecked() else 0)
+            rec['exec_flags'] = flags - 0x10000 if flags >= 0x8000 else flags
 
         # 普通字段
         for fn, _, _, _ in KON_FIELDS:
