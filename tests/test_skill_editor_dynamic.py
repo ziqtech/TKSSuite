@@ -230,6 +230,40 @@ class SkillEditorDynamicTests(unittest.TestCase):
                 editor.close()
                 app.processEvents()
 
+    def test_reload_of_blank_protected_slots_stays_clean(self):
+        """受保护槽已是空白形态时不算冲突: 加载后不得凭空置脏."""
+        from PySide6.QtWidgets import QApplication, QMessageBox
+        import skill_editor.skill_editor as skill_module
+
+        app = QApplication.instance() or QApplication([])
+        editor = SkillEditorApp()
+        # 编辑器自己保存过的文件: 344..349 是 blank_skill_record 形态
+        # (sub_count=-1, 其余字段为 0), 并非真的被技能数据占用
+        records = [self._make_record(i) for i in range(350)]
+        for index in range(344, 350):
+            records[index] = blank_skill_record(index)
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "TKSkill.dat"
+            save_skills(str(path), records)
+            editor.skill_path = str(path)
+            editor.tkt = {}
+            editor.tkt_full = {}
+            try:
+                with mock.patch.object(
+                        skill_module.QMessageBox, "warning",
+                        return_value=QMessageBox.Ok) as warning:
+                    editor._reload()
+
+                warning.assert_not_called()
+                self.assertFalse(editor._dirty)
+                self.assertNotIn(
+                    "已强制清空扩展字段冲突槽", editor.status_var.text())
+                self.assertEqual(editor.records[344]["sub_count"], -1)
+            finally:
+                editor._dirty = False
+                editor.close()
+                app.processEvents()
+
     def test_protected_slot_cannot_be_applied_as_skill_data(self):
         from PySide6.QtWidgets import QApplication, QMessageBox
         import skill_editor.skill_editor as skill_module

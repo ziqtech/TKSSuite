@@ -170,15 +170,20 @@ def is_warpc_extension_skill_index(index):
 
 
 def clear_warpc_extension_skill_slots(records):
-    """Clear protected WarPC extension slots and return the affected indices."""
+    """Clear protected WarPC extension slots and return the affected indices.
+
+    占用判定以 :func:`blank_skill_record` 模板为准 (与 ``_record_is_empty``
+    同源): 空白槽的 ``sub_count`` 是 -1 而非 0, 若按字面 0 比较, 会把编辑器
+    自己保存过的空白槽当成冲突, 使加载后凭空置脏。
+    """
     cleared = []
     for record in records:
         index = record.get('index')
         if not isinstance(index, int) or not is_warpc_extension_skill_index(index):
             continue
-        if any(record.get(key, 0) != 0 for key, _, _, _, _ in ALL_FIELDS):
-            cleared.append(index)
         blank = blank_skill_record(index)
+        if any(record.get(key, 0) != blank[key] for key, _, _, _, _ in ALL_FIELDS):
+            cleared.append(index)
         record.clear()
         record.update(blank)
     return cleared
