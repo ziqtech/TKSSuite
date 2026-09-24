@@ -65,6 +65,7 @@ WarWay.dat 格式 (每条1024字节, 共100条, 32x32有符号字节网格):
 
 import os
 import random
+import re
 import struct
 import sys
 from functools import partial
@@ -121,6 +122,8 @@ except ImportError:
 WAR_REC_SIZE = 498
 WAR_REC_COUNT = 219
 WSC_ENTRIES = 84
+SCENE_NAME_TKT_BASE = 300  # mat_editor: scene_id -> TKT 条目 ID
+WAR_CMD_RE = re.compile(r'\bWar\s*\(\s*(\d+)\s*\)')
 
 # 敌军特殊标志位 (enemy_flags, uint16)
 ENEMY_FLAG_BITS = [
@@ -325,6 +328,113 @@ def save_wardata(filepath: str, records: list):
 def load_tkt(tkt_path: str) -> dict:
     """加载 TKT 文本 — 委托给 editor_utils.tkt_loader"""
     return load_tkt_simple(tkt_path, first_line_only=True)
+
+
+def _scene_display_name(tkt: dict, scene_id: int) -> str:
+    """SC.GRP 场景号 -> 地图名称 (TKT 条目 300 + scene_id)。"""
+    if scene_id == -1:
+        return "全局(所有场景)"
+    txt = tkt.get(SCENE_NAME_TKT_BASE + scene_id, "")
+    return txt.split('\n')[0].strip() if txt else f"场景{scene_id}"
+
+
+def load_war_scene_names(game_dir: str, tkt: dict) -> dict:
+    """WarData 战斗组序号 -> 触发战斗时所在 SC.GRP 场景名。
+
+    关联链与 mat_editor 一致:
+      TKMat 实体(d1=SC.GRP场景号) -> A/B/C 链 -> TKDefUnit
+      -> DEFINE((f1<<16)|f0) -> TKD 脚本中的 War(战斗组ID)
+
+    脚本没有引用该战斗组时, 回退到 type=16 随机战斗区实体
+    (d52/d53/d54=三个战斗组ID), 其 d1 同样是触发场景。
+    """
+    if not game_dir:
+        return {}
+
+    mat_path = os.path.join(game_dir, 'TKMat.Dat')
+    du_path = os.path.join(game_dir, 'TKDefUnit.dat')
+    tkd_path = os.path.join(game_dir, 'TKD.dat')
+    if not os.path.exists(mat_path) or not os.path.exists(du_path):
+        return {}
+
+    try:
+        mat_dir = os.path.join(os.path.dirname(__file__), '..', 'mat_editor')
+        if mat_dir not in sys.path:
+            sys.path.insert(0, mat_dir)
+        from mat_dat_io import load_mat
+        records = load_mat(mat_path)
+    except Exception:
+        return {}
+
+    defunits = {}
+    try:
+        with open(du_path, 'rb') as f:
+            for i, fields in enumerate(struct.iter_unpack('<HHHHHHHH', f.read())):
+                if fields[0] or fields[1]:
+                    defunits[i] = (fields[0], fields[1], fields[6])
+    except Exception:
+        return {}
+
+    define_map = {}
+    if os.path.exists(tkd_path):
+        try:
+            from mat_text_codec import load_tkd, parse_defines
+            defines, _ = parse_defines(load_tkd(tkd_path))
+            define_map = {d['define_id']: d for d in defines}
+        except Exception:
+            define_map = {}
+
+    script_scenes = {}
+    random_scenes = {}
+    define_war_ids = {}
+
+    for rec in records:
+        if not rec.get('_has_data'):
+            continue
+        scene_id = rec.get('d1', -1)
+
+        if rec.get('d0') == 16:
+            for di in (52, 53, 54):
+                war_id = rec.get(f'd{di}', 0)
+                if 0 <= war_id < WAR_REC_COUNT:
+                    random_scenes.setdefault(war_id, set()).add(scene_id)
+
+        if not define_map:
+            continue
+        seen_defunits = set()
+        for head_di in (39, 40, 41):
+            cur = rec.get(f'd{head_di}', 0)
+            while cur > 0 and cur not in seen_defunits:
+                seen_defunits.add(cur)
+                du = defunits.get(cur)
+                if du is None:
+                    break
+                define_id = (du[1] << 16) | du[0]
+                if define_id not in define_war_ids:
+                    war_ids = []
+                    define = define_map.get(define_id)
+                    if define:
+                        for line in define.get('body_lines', []):
+                            line = line.split('//', 1)[0]
+                            for match in WAR_CMD_RE.finditer(line):
+                                war_id = int(match.group(1))
+                                if 0 <= war_id < WAR_REC_COUNT:
+                                    war_ids.append(war_id)
+                    define_war_ids[define_id] = war_ids
+                for war_id in define_war_ids[define_id]:
+                    script_scenes.setdefault(war_id, set()).add(scene_id)
+                cur = du[2]
+
+    names = {}
+    for war_id in set(script_scenes) | set(random_scenes):
+        scene_ids = script_scenes.get(war_id) or random_scenes.get(war_id)
+        scene_names = []
+        for scene_id in sorted(scene_ids):
+            name = _scene_display_name(tkt, scene_id)
+            if name not in scene_names:
+                scene_names.append(name)
+        names[war_id] = '、'.join(scene_names)
+    return names
 
 
 def load_warpc_names(warpc_path: str, tkt: dict) -> dict:
@@ -571,6 +681,7 @@ class WarDataEditorV2(EditorMainWindow):
         self.records = []
         self.wsc_offsets = []
         self.tkt = {}
+        self.war_scene_names = {}
         self._dirty = False
         self._warway_dirty = False
         self.warway_records = []  # 完整 WarWay.dat 内存网格 (list[bytearray], 编辑区格直接修改)
@@ -689,15 +800,15 @@ class WarDataEditorV2(EditorMainWindow):
 
         # 左侧：战斗列表
         self.table = AdaptiveTableWidget(
-            0, 8,
-            stretch_columns={6},
-            minimum_widths=[45, 105, 62, 62, 62, 80, 180, 60],
+            0, 9,
+            stretch_columns={1, 7},
+            minimum_widths=[58, 120, 140, 52, 52, 52, 76, 140, 68],
             row_height=40,
         )
-        self.table.setHorizontalHeaderLabels(["序号", "地图", "敌军数", "宝物数", "陷阱数", "固定/随机", "参战人物", "参数"])
-        # 左侧列表在默认 1600px 窗口中约占 700px。固定列按表头和实际值
-        # 预留宽度，把可变空间留给最长、最容易被截断的“参战人物”列。
-        self.table.setMinimumWidth(540)
+        self.table.setHorizontalHeaderLabels(["序号", "地图名称", "分辨率", "敌军数", "宝物数", "陷阱数", "固定/随机", "参战人物", "参数"])
+        # 左侧列表在默认 1600px 窗口中约占 860px。序号/分辨率保留足够内容宽度，
+        # 剩余可变空间分配给地图名称和最容易截断的“参战人物”列。
+        self.table.setMinimumWidth(760)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -729,9 +840,9 @@ class WarDataEditorV2(EditorMainWindow):
         rl.addWidget(self.tabs, 1)
         splitter.addWidget(right)
         # 默认 1600x900 窗口（扣除边距与分隔条后内容区约 1570px）下，
-        # 左侧列表保持 ~700px 初始宽度不变，新增空间全部给右侧编辑面板。
+        # 左侧列表保持 ~860px 初始宽度，其余空间给右侧编辑面板。
         # 参战人物列拉伸受上限钳制，用户拖大分隔条后超出部分尾部留白。
-        splitter.setSizes([700, 870])
+        splitter.setSizes([860, 710])
         # 切换到场景标签页时自动刷新
         self.tabs.currentChanged.connect(self._on_tab_changed)
 
@@ -804,6 +915,10 @@ class WarDataEditorV2(EditorMainWindow):
             return (w, h)
         except: return None
 
+    def _get_battle_map_name(self, battle_id):
+        """战斗组序号 -> 触发该战斗的 SC.GRP 场景名。"""
+        return self.war_scene_names.get(battle_id, "未关联")
+
     def _trea_detail_str(self, rec):
         fixed = random_trea = 0
         for i in range(10):
@@ -836,7 +951,8 @@ class WarDataEditorV2(EditorMainWindow):
         trea_detail = self._trea_detail_str(rec)
         mid = rec['map_id']
         res = self._get_wsc_resolution(mid)
-        map_info = f"{mid} ({res[0]}x{res[1]})" if res else str(mid)
+        map_name = self._get_battle_map_name(rec['index'])
+        resolution = f"{res[0]}x{res[1]}" if res else "-"
         enemy_names = []
         seen = set()
         for eid in rec['enemy_ids']:
@@ -854,8 +970,8 @@ class WarDataEditorV2(EditorMainWindow):
         if flags & 2: flag_parts.append('续')
         if flags & 4: flag_parts.append('随')
         flags_info = ','.join(flag_parts) if flag_parts else '-'
-        return [str(rec['index']), map_info, str(enemy_count), str(trea_count),
-                str(trap_count), trea_detail, chars_info, flags_info]
+        return [str(rec['index']), map_name, resolution, str(enemy_count),
+                str(trea_count), str(trap_count), trea_detail, chars_info, flags_info]
 
     def _fill_tree_row(self, rec):
         row = self.table.rowCount()
@@ -934,6 +1050,7 @@ class WarDataEditorV2(EditorMainWindow):
         self.wsc_offsets = load_wsc_idx(self.wsc_idx_path) if self.wsc_idx_path else []
         self.warway_records = load_warway_all(self.warway_path) if self.warway_path else []
         self.tkt = load_tkt(self.tkt_path) if self.tkt_path else {}
+        self.war_scene_names = load_war_scene_names(d, self.tkt)
         self.warpc_names = load_warpc_names(self.warpc_path, self.tkt) if self.warpc_path else {}
         self.warpc_records = load_warpc_records(self.warpc_path) if self.warpc_path else []
         self.fa_sprites = load_mu_sprites(self.fa_path) if self.fa_path else []
@@ -1020,7 +1137,8 @@ class WarDataEditorV2(EditorMainWindow):
                     seen.add(eid)
                     enemy_names.append(self._enemy_name(eid))
             char_names = ','.join(enemy_names) if enemy_names else ''
-            if not search_match(query, rec['index'], rec['map_id'], char_names):
+            if not search_match(query, rec['index'], rec['map_id'],
+                                self._get_battle_map_name(rec['index']), char_names):
                 continue
             self._fill_tree_row(rec)
 
@@ -1039,6 +1157,7 @@ class WarDataEditorV2(EditorMainWindow):
             records = load_wardata(wardata_path)
             warway_records = load_warway_all(warway_path) if warway_path else []
             tkt = {}
+            war_scene_names = {}
             warpc_names, warpc_records = {}, []
             tkitem_names, tkitem_names_by_id = {}, {}
             tkitem_records = []
@@ -1050,7 +1169,8 @@ class WarDataEditorV2(EditorMainWindow):
                 if tkitem_path:
                     tkitem_names, tkitem_names_by_id = load_tkitem_names(tkitem_path, tkt)
                     tkitem_records = load_tkitem_records(tkitem_path, tkt)
-            return (records, warway_records, tkt, warpc_names, warpc_records,
+            war_scene_names = load_war_scene_names(os.path.dirname(wardata_path), tkt)
+            return (records, warway_records, tkt, war_scene_names, warpc_names, warpc_records,
                     tkitem_names, tkitem_names_by_id, tkitem_records)
 
         self._load_worker = run_background(
@@ -1059,11 +1179,12 @@ class WarDataEditorV2(EditorMainWindow):
             on_error=self._on_load_error)
 
     def _on_load_success(self, result):
-        (records, warway_records, tkt, warpc_names, warpc_records,
+        (records, warway_records, tkt, war_scene_names, warpc_names, warpc_records,
          tkitem_names, tkitem_names_by_id, tkitem_records) = result
         self.records = records
         self.warway_records = warway_records
         self.tkt = tkt
+        self.war_scene_names = war_scene_names
         self.warpc_names = warpc_names
         self.warpc_records = warpc_records
         self.tkitem_names = tkitem_names
