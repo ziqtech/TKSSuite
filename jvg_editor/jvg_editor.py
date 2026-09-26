@@ -967,11 +967,11 @@ class JVGEditor(EditorMainWindow):
 
     def _on_theme_applied(self, theme_id: str):
         """主题应用后同步画布背景色。
-        该钩子由 apply_theme_to_window 调用，覆盖菜单选择 / 快捷切换两条路径，
-        避免深色模式下 2D 视口仍残留浅色背景。"""
+        该钩子由 apply_theme_to_window 调用，覆盖菜单选择 / 快捷切换两条路径；
+        初始化阶段画布尚未创建（主题先于 _build_ui 应用），启动时的底色
+        由 _setup_ui 直接取 canvas_background 完成。"""
         if hasattr(self, '_canvas'):
-            scene_bg = QColor(30, 30, 30) if self._is_dark else QColor(200, 204, 208)
-            self._canvas.setBackgroundBrush(scene_bg)
+            self._canvas.setBackgroundBrush(QColor(theme_manager.canvas_background(theme_id)))
 
     def _setup_menu(self):
         menubar = self.menuBar()
@@ -1283,7 +1283,9 @@ class JVGEditor(EditorMainWindow):
         self._scene = QGraphicsScene()
         self._canvas = CanvasView(self._scene)
         self._canvas.set_editor(self)
-        self._canvas.setBackgroundBrush(QColor(30, 30, 30))
+        # 底色取主题画布色（theme_tokens.CANVAS_BG），与 QSS 的 QGraphicsView
+        # 规则同源 — 启动时主题已应用、钩子不会再触发，必须在此处取当前主题
+        self._canvas.setBackgroundBrush(QColor(theme_manager.canvas_background(self._theme_id)))
         self._canvas.setRenderHint(QPainter.Antialiasing, False)
         self._canvas.setRenderHint(QPainter.SmoothPixmapTransform, False)
         self._canvas.setDragMode(QGraphicsView.NoDrag)
