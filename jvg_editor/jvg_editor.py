@@ -927,6 +927,15 @@ class JVGEditor(EditorMainWindow):
         "  · 头像资源批量导入/导出 (Fa.JVG)\n"
         "  · 支持 MOD 格式导入导出 (.tksmod)\n"
         "  · 深色/浅色主题切换\n\n"
+        "帧导入与替换:\n"
+        "  · BBOX裁剪: 按 alpha 非透明区域裁剪并计算偏移 (图中心对齐 0)\n"
+        "    添加图片: 裁剪透明边缘并计算偏移\n"
+        "    导入图集: bbox 模式 (不勾选=精确匹配, 按旧帧 offset 提取)\n"
+        "  · 自动重算色板: 勾选后新增图片时新旧图片一起重新计算色板\n"
+        "    (新图精确, 旧帧可能轻微调整)\n"
+        "  · 未勾选时, 色板槽位不足则自动靠色 (旧图不变, 新图用旧图色板),\n"
+        "    不再弹窗\n"
+        "  · 槽位充足时始终自动增量分配颜色, 无需处理\n\n"
         "快捷键:\n"
         "  1 = 平铺视图   2 = 逐帧视图   3 = 动画视图\n"
         "  Ctrl+T = 切换主题")
@@ -1115,16 +1124,6 @@ class JVGEditor(EditorMainWindow):
         btn_delete_frame.clicked.connect(self._del_frame)
         frame_row.addWidget(btn_delete_frame)
 
-        btn_help = QPushButton("?")
-        btn_help.setFixedWidth(32)
-        btn_help.setToolTip(
-            "BBOX裁剪：按 alpha 非透明区域裁剪并计算偏移（图中心对齐 0）\n"
-            "　添加图片：裁剪透明边缘并计算偏移\n"
-            "　导入图集：bbox 模式（不勾选=精确匹配，按旧帧 offset 提取）\n\n"
-            "自动重算色板：勾选后新增图片时新旧图片一起重新计算色板（新图精确，旧帧可能轻微调整）\n"
-            "未勾选时，色板槽位不足则自动靠色（旧图不变，新图用旧图色板），不再弹窗\n\n"
-            "槽位充足时始终自动增量分配颜色，无需处理")
-        frame_row.addWidget(btn_help)
         frame_row.addStretch()
         main_layout.addLayout(frame_row)
 
