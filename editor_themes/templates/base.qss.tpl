@@ -305,6 +305,9 @@ QDateEdit::up-button, QTimeEdit::up-button, QDateTimeEdit::up-button {
     width: 20px;
     border-left: {{bd_inset}};
     border-bottom: {{bd_inset}};
+    /* subcontrol 背景会盖掉外框线, 顶/右外沿须自绘补齐 (bd_17 与外框同源) */
+    border-top: {{bd_17}};
+    border-right: {{bd_17}};
     border-top-right-radius: 7px;
 }
 QSpinBox::up-arrow, QDoubleSpinBox::up-arrow,
@@ -321,6 +324,9 @@ QDateEdit::down-button, QTimeEdit::down-button, QDateTimeEdit::down-button {
     width: 20px;
     border-left: {{bd_inset}};
     border-top: {{bd_inset}};
+    /* 同 up-button: 底/右外沿自绘补齐 */
+    border-right: {{bd_17}};
+    border-bottom: {{bd_17}};
     border-bottom-right-radius: 7px;
 }
 QSpinBox::down-arrow, QDoubleSpinBox::down-arrow,
@@ -332,6 +338,28 @@ QDateEdit::down-arrow, QTimeEdit::down-arrow, QDateTimeEdit::down-arrow {
 QSpinBox::up-button:hover, QSpinBox::down-button:hover,
 QDoubleSpinBox::up-button:hover, QDoubleSpinBox::down-button:hover {
     background-color: {{bg_32}};
+}
+/* 按钮列外沿随外框状态同步变色 (hover→bd_hover, focus→accent)。
+   只覆盖外沿两侧的 color, 不触碰 bd_inset 分隔线 */
+QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover,
+QDateEdit::up-button:hover, QTimeEdit::up-button:hover, QDateTimeEdit::up-button:hover {
+    border-top-color: {{bd_hover}};
+    border-right-color: {{bd_hover}};
+}
+QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover,
+QDateEdit::down-button:hover, QTimeEdit::down-button:hover, QDateTimeEdit::down-button:hover {
+    border-right-color: {{bd_hover}};
+    border-bottom-color: {{bd_hover}};
+}
+QSpinBox::up-button:focus, QDoubleSpinBox::up-button:focus,
+QDateEdit::up-button:focus, QTimeEdit::up-button:focus, QDateTimeEdit::up-button:focus {
+    border-top-color: {{accent}};
+    border-right-color: {{accent}};
+}
+QSpinBox::down-button:focus, QDoubleSpinBox::down-button:focus,
+QDateEdit::down-button:focus, QTimeEdit::down-button:focus, QDateTimeEdit::down-button:focus {
+    border-right-color: {{accent}};
+    border-bottom-color: {{accent}};
 }
 
 /* ── 列表与选择器 ── */
