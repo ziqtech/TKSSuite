@@ -1235,6 +1235,20 @@ def _apply_patch_data_expand(defn: PatchDef, ctx: PatchContext) -> bool:
         log(f"  [ERROR] 写入扩展数据失败 ({nw}/{new_size})")
         return False
 
+    # tail_fill: 数据未覆盖的缓冲区尾部按声明字节填充 (默认保持 VirtualAlloc 的零)。
+    # 零槽会被结构化扫描当成合法记录 (如 TKShop 零记录 area=0=药店/item=0),
+    # 填 0xFF 使其匹配不到任何商店; WarPC 复用缓冲按实际数据长度分配, 无尾部可填。
+    tail_fill = int(extra.get("tail_fill", 0) or 0)
+    if tail_fill and not reuse_warpc and buffer_size > new_size:
+        tail = bytes([tail_fill & 0xFF]) * (buffer_size - new_size)
+        tw = write_pm(hp, new_buf + new_size, tail)
+        if tw == len(tail):
+            log(f"  [OK] 尾部填充 0x{tail_fill & 0xFF:02X} x {len(tail)} bytes "
+                f"(防零槽伪记录)")
+        else:
+            log(f"  [ERROR] 尾部填充失败 ({tw}/{len(tail)})")
+            return False
+
     code = ctx.code_buf
     start = ctx.code_start_addr
     all_ok = True

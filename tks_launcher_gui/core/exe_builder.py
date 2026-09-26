@@ -332,6 +332,23 @@ class DataSectionPatchItem:
     aux_patches: Optional[List[Dict]] = None
     bytes_patches: Optional[List['BytesPatchItem']] = None
     redirect_size: bool = True   # False 时仅跳过大小立即数改写，保留其余重定向
+    tail_fill: int = 0           # 非 0 时节改为 raw-backed: 数据未覆盖的逻辑
+                                 # 容量缺口按该字节烧录进文件 (BSS 节永远零
+                                 # 初始化, 零槽会被结构化扫描当成合法记录,
+                                 # 如 TKShop 零记录 area=0=药店/item=0)
+
+
+def _tail_fill_extent(item: 'DataSectionPatchItem') -> int:
+    """tail_fill 数据段的落盘字节数 (front_pad + 逻辑容量 + 辅助数组)。
+
+    未声明 tail_fill 返回 0 (保持 BSS 形态)。逻辑容量之外的 64KB 后备
+    对齐区游戏代码不可达, 不落盘, 内存中仍由加载器零填充。
+    """
+    if not int(getattr(item, 'tail_fill', 0) or 0):
+        return 0
+    aux = max(int(item.aux_size or 0), 0)
+    logical = int(item.logical_size or 0) or (len(item.data) - aux)
+    return item.front_pad + logical + aux
 
 
 @dataclass
@@ -872,6 +889,12 @@ class ExeBuilder:
                            f'RVA=0x{new_va:X}, 绝对=0x{new_abs:X}, '
                            f'前置垫={item.front_pad}, 逻辑={item.logical_size or backing_size}, '
                            f'后备={backing_size}, 辅助={item.aux_size} 字节 '
+                           f'(tail_fill raw-backed, 占文件空间)'
+                           if _tail_fill_extent(item) else
+                           f'  [{item.patch_id}] 注入 {item.section_name}: '
+                           f'RVA=0x{new_va:X}, 绝对=0x{new_abs:X}, '
+                           f'前置垫={item.front_pad}, 逻辑={item.logical_size or backing_size}, '
+                           f'后备={backing_size}, 辅助={item.aux_size} 字节 '
                            f'(BSS, 不占文件空间)')
                 data_section_results.append((item, new_abs, 0, new_va))
                 next_va = align_up(
@@ -1160,6 +1183,32 @@ class ExeBuilder:
                             log.append(result.error)
                             return result
 
+        # ── 4c. tail_fill 数据段落盘 (raw-backed) ──
+        # BSS 节由 loader 零初始化, 数据区 [0, dat 解压大小) 在游戏启动时被
+        # 部署目录的 .dat 覆盖, 但尾部剩余槽永远保持零 —— 零槽会被结构化扫描
+        # 当成合法记录 (TKShop 零记录 area=0=药店 / item=0 → 药店刷 #0 号
+        # ID 8037 药品)。tail_fill 型节改为 raw-backed: 数据+填充写入文件,
+        # 未被 .dat 覆盖的尾部保留烧录的填充字节 (与运行时 VirtualAllocEx+
+        # write_pm 注入路径行为一致)。必须在全部值扫描/重定向之后执行,
+        # 避免落盘字节参与 old_base/old_size 扫描; 在 step 5 之前执行,
+        # 让 .test 的文件偏移落在这些字节之后。
+        for idx, (item, new_abs, _raw_off, va) in enumerate(data_section_results):
+            extent = _tail_fill_extent(item)
+            if not extent:
+                continue
+            raw_size = align_up(extent, pe.file_align)
+            blob = (b'\x00' * item.front_pad
+                    + bytes(item.data[:extent - item.front_pad])
+                    ).ljust(raw_size, b'\x00')
+            raw_off = align_up(len(data), pe.file_align)
+            if len(data) < raw_off:
+                data.extend(b'\x00' * (raw_off - len(data)))
+            data.extend(blob)
+            data_section_results[idx] = (item, new_abs, raw_off, va)
+            log.append(f'  [{item.patch_id}] tail_fill raw-backed: '
+                       f'{extent} 字节 (填充 0x{item.tail_fill & 0xFF:02X}) '
+                       f'落盘 @ 0x{raw_off:X} (raw 0x{raw_size:X})')
+
         # ── 5. 计算 .test 节布局 ──
         test_rva = 0
         test_file_off = 0
@@ -1367,9 +1416,19 @@ class ExeBuilder:
                     log.append(result.error)
                     return result
                 name_b = item.section_name.encode('ascii')[:8].ljust(8, b'\x00')
-                entry = name_b + struct.pack('<IIIIIIHHI',
-                    item.front_pad + len(item.data), va, 0, 0,
-                    0, 0, 0, 0, self.SECTION_CHARS_DATA)
+                extent = _tail_fill_extent(item)
+                if extent:
+                    # raw-backed: VirtualSize 不变 (aux_base = 基址+backing 的
+                    # 语义保持), 落盘字节数覆盖 front_pad+逻辑容量+辅助数组,
+                    # 其余内存仍由加载器零填充 (与 BSS 行为一致)
+                    entry = name_b + struct.pack('<IIIIIIHHI',
+                        item.front_pad + len(item.data), va,
+                        align_up(extent, pe.file_align), raw_off,
+                        0, 0, 0, 0, self.SECTION_CHARS_DATA)
+                else:
+                    entry = name_b + struct.pack('<IIIIIIHHI',
+                        item.front_pad + len(item.data), va, 0, 0,
+                        0, 0, 0, 0, self.SECTION_CHARS_DATA)
                 data[sec_entry_off:sec_entry_off + 40] = entry
 
             if need_test:

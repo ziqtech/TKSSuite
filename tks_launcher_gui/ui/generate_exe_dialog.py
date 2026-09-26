@@ -803,12 +803,20 @@ class GenerateExeDialog(QDialog):
             return None
 
         logical_size = expansion_logical_size(len(content), cap)
+        # tail_fill: 数据未覆盖的逻辑容量部分按声明字节填充, 避免零槽被
+        # 结构化扫描当成合法记录 (如 TKShop 零记录 area=0=药店/item=0)。
+        # 逻辑容量之外的 64KB 后备对齐区域游戏代码不可达, 保持补零不变。
+        tail_fill = int(extra.get('tail_fill', 0) or 0)
+        tail_bytes = logical_size - len(content) if tail_fill else 0
+        if tail_bytes > 0:
+            content = content.ljust(logical_size, bytes([tail_fill & 0xFF]))
         content = pad_section_data(content, min_size=logical_size)
         backing_size = len(content)
         if aux_size:
             content += b"\0" * aux_size
         self._log(f'[{p.id}] 注入 {len(content)} 字节 '
                   f'(前置垫 {front_pad} + 逻辑 {logical_size} + '
+                  f'尾部填充 {tail_bytes} + '
                   f'后备填充 {backing_size - logical_size} + 辅助 {aux_size})')
 
         bytes_items = []
@@ -839,6 +847,7 @@ class GenerateExeDialog(QDialog):
             backing_size=backing_size,
             aux_size=aux_size,
             front_pad=front_pad,
+            tail_fill=tail_fill,
             aux_patches=aux_patches,
             bytes_patches=[BytesPatchItem(
                 patch_id=p.id, name=p.name, entries=bytes_items)]
