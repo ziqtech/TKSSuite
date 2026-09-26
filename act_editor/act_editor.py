@@ -504,6 +504,7 @@ class ActEditorV2(EditorMainWindow):
         self._tail_vars = []
         self._tail_file_lbls = []
         self._float_specs = []
+        self._float_effect_on = True  # 预览飘字效果开关 (工具栏 checkbox)
         self._float_type = DEFAULT_FLOAT_TYPE
         self._float_type_cb = None
         self._float_total = DEFAULT_FLOAT_TOTAL
@@ -710,6 +711,21 @@ class ActEditorV2(EditorMainWindow):
         path_layout.addStretch()
         main_layout.addLayout(path_layout)
 
+        # 定宽: 飘字下拉框恰好显示 4 个中文字符 / 数值框恰好显示 4 位数字。
+        # 必须在控件全部挂入窗口后计算 — ensurePolished 后字体才反映主题
+        # QSS 的全局 font-size(13px), 构建中途测量会偏小导致截字。
+        # 铬宽实测各主题一致: combo=46 (边框2+内边距16+箭头28) / spin=56
+        # (边框+内边距+右侧箭头区, 含内嵌行编辑器自身边距)。主题 QSS 的
+        # 输入类 padding 槽位若调整, 需同步这两个常量。
+        # combo 最长的 "未命中 Miss" 一项超出 4 字宽会被裁切, 属预期取舍
+        # (完整文案见各条目 tooltip)。
+        self._float_type_cb.ensurePolished()
+        self._float_type_cb.setFixedWidth(
+            46 + self._float_type_cb.fontMetrics().horizontalAdvance("伤害飘字") + 2)
+        self._float_total_spin.ensurePolished()
+        self._float_total_spin.setFixedWidth(
+            56 + self._float_total_spin.fontMetrics().horizontalAdvance("9999") + 2)
+
     def _build_scroll_tab(self, name):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -890,7 +906,6 @@ class ActEditorV2(EditorMainWindow):
         self._float_type_cb.setCurrentIndex(default_idx if default_idx >= 0 else 0)
         self._float_type = (
             self._float_type_cb.currentData() or DEFAULT_FLOAT_TYPE)
-        self._float_type_cb.setMinimumWidth(120)
         self._float_type_cb.setToolTip(
             "选择预览时使用的飘字类型；颜色与文案对应原版战斗实际效果")
         self._float_type_cb.currentIndexChanged.connect(
@@ -903,8 +918,6 @@ class ActEditorV2(EditorMainWindow):
         self._float_total_spin.setRange(1, 999999)
         self._float_total_spin.setValue(DEFAULT_FLOAT_TOTAL)
         self._float_total_spin.setSingleStep(1)
-        # 主题 QSS 会预留边框、内边距和右侧箭头；72px 会把 999 压没。
-        self._float_total_spin.setFixedWidth(100)
         self._float_total = DEFAULT_FLOAT_TOTAL
         self._float_total_spin.setToolTip(
             "数字类飘字的预览总值，按触发帧分摊后显示；"
@@ -912,6 +925,14 @@ class ActEditorV2(EditorMainWindow):
         self._float_total_spin.valueChanged.connect(
             self._on_float_total_changed)
         edit_ctrl.addWidget(self._float_total_spin)
+        self._float_effect_cb = QCheckBox("伤害飘字")
+        self._float_effect_cb.setChecked(True)
+        self._float_effect_cb.setToolTip(
+            "开启或关闭预览中的飘字效果（伤害/恢复/Miss 等全部类型）；\n"
+            "关闭时飘字类型下拉框与数值框一并不生效")
+        self._float_effect_cb.stateChanged.connect(
+            self._on_float_effect_toggled)
+        edit_ctrl.addWidget(self._float_effect_cb)
         self._sync_float_total_enabled()
 
         edit_ctrl.addStretch()
@@ -1875,16 +1896,28 @@ class ActEditorV2(EditorMainWindow):
         self._float_total = int(self._float_total_spin.value())
         self._refresh_float_specs()
 
+    def _on_float_effect_toggled(self, state):
+        """开关预览飘字效果: 关闭时同步置灰类型/数值控件并清空飘字数据。"""
+        self._float_effect_on = bool(state)
+        self._float_type_cb.setEnabled(self._float_effect_on)
+        self._sync_float_total_enabled()
+        self._refresh_float_specs()
+        self.status_var.setText(
+            "飘字效果: 开启" if self._float_effect_on else "飘字效果: 已关闭")
+
     def _sync_float_total_enabled(self):
         if self._float_total_spin is None:
             return
         ft = self._current_float_type()
         is_number = ft.get('kind') == 'number'
-        self._float_total_spin.setEnabled(is_number)
-        self._float_total_spin.setToolTip(
-            "数字类飘字的预览总值，按触发帧分摊后显示；默认 999"
-            if is_number else
-            "当前为文字类飘字，不使用数值分摊")
+        self._float_total_spin.setEnabled(self._float_effect_on and is_number)
+        if not self._float_effect_on:
+            self._float_total_spin.setToolTip("飘字效果已关闭")
+        else:
+            self._float_total_spin.setToolTip(
+                "数字类飘字的预览总值，按触发帧分摊后显示；默认 999"
+                if is_number else
+                "当前为文字类飘字，不使用数值分摊")
 
     def _preview_float_total(self, float_type=None):
         """返回数字类飘字的预览总值；文字类回退到类型默认值。"""
@@ -1919,6 +1952,8 @@ class ActEditorV2(EditorMainWindow):
     def _make_float_specs(self, entry, float_type=None, total=None):
         """对应 sub_433F04：按数值出现时间登记飘字并分摊总值。"""
         # 测试可能以 self=None 调用；始终经类方法解析类型。
+        if self is not None and not self._float_effect_on:
+            return []  # 预览飘字被工具栏开关关闭
         ft = ActEditorV2._current_float_type(self, float_type)
         triggers = [v for v in entry['param16'][4:12] if v > 0]
         if not triggers:
