@@ -263,6 +263,7 @@ class TimelineWidget(QWidget):
         self._ph_bottom = 100
         self._pan_start = None
         self._drag_state = None
+        self._sfx_press = None    # (x,y) 编辑模式按下♪的起点, 未越过拖拽阈值松开=点击试听
         self._marquee_start = None
 
     def set_zoom(self, z):
@@ -279,6 +280,7 @@ class TimelineWidget(QWidget):
         self._playhead = playhead
         self._layers_info = layers_info
         self._sfx_in = sfx_markers
+        self._clamp_pan_y()
         self.update()
 
     def set_playhead(self, ph):
@@ -472,6 +474,40 @@ class TimelineWidget(QWidget):
                 return idx, 'sfx', trig
         return None, 'empty', tick
 
+    def _play_sfx_preview(self, sfx_idx):
+        """按音效序号试听 (编辑/非编辑模式点击♪共用)。"""
+        ed = self.editor
+        if ed._editing_idx < 0:
+            return
+        tail = ed.entries[ed._editing_idx].get('tail') or []
+        sid = tail[sfx_idx * 2] if sfx_idx * 2 < len(tail) else 0
+        if sid and ed.sws_grp:
+            ed._play_sound_preview(sid)
+
+    def _content_height(self):
+        """轨道区 + 音效标记区的完整内容高度 (pan_y 钳制用, 与 paintEvent 布局同式)。"""
+        base = (self._ruler_h
+                + len(self._layers_info) * (self._track_h + self._track_gap) + 10)
+        if not self._sfx_in:
+            return base
+        rows = {}
+        for (_, _, _, trig, _) in self._sfx_in:
+            rows[trig] = rows.get(trig, 0) + 1
+        return base + 26 + max(rows.values()) * 14
+
+    def _clamp_pan_y(self):
+        """垂直平移钳制: 内容顶不越过自然位置 (上边界), 内容底不高于视图底;
+        内容不足一屏时不允许平移。"""
+        if not self._layers_info:
+            self._pan_y = 0
+            return
+        view_h = max(1, self.height())
+        content_h = self._content_height()
+        if content_h <= view_h:
+            self._pan_y = 0
+        else:
+            self._pan_y = max(view_h - content_h, min(0, self._pan_y))
+
     def mousePressEvent(self, event):
         x = event.position().x()
         y = event.position().y()
@@ -497,17 +533,15 @@ class TimelineWidget(QWidget):
 
         layer_idx, hit_type, tick = self._hit_test(x, y)
         self._drag_state = None
+        self._sfx_press = None
         self._marquee_start = None
 
         if hit_type == 'sfx':
             if edit_ok:
                 self._drag_state = ('sfx', layer_idx)
+                self._sfx_press = (x, y)
                 return
-            if self.editor._editing_idx >= 0:
-                tail = self.editor.entries[self.editor._editing_idx].get('tail') or []
-                sid = tail[layer_idx * 2] if layer_idx * 2 < len(tail) else 0
-                if sid and self.editor.sws_grp:
-                    self.editor._play_sound_preview(sid)
+            self._play_sfx_preview(layer_idx)
         elif hit_type in ('left_edge', 'right_edge') and edit_ok:
             self._drag_state = (layer_idx, hit_type)
         elif hit_type == 'body':
@@ -547,6 +581,7 @@ class TimelineWidget(QWidget):
             sx, sy, px0, py0 = self._pan_start
             self._pan_x = px0 + (x - sx)
             self._pan_y = py0 + (y - sy)
+            self._clamp_pan_y()
             self.update()
             return
 
@@ -555,6 +590,12 @@ class TimelineWidget(QWidget):
             return
 
         if self._drag_state is not None:
+            if (self._sfx_press is not None
+                    and self._drag_state[0] == 'sfx'
+                    and abs(x - self._sfx_press[0]) < QApplication.startDragDistance()
+                    and abs(y - self._sfx_press[1]) < QApplication.startDragDistance()):
+                return  # 未越过拖拽阈值: 保持"点击"语义, 不启动拖拽
+            self._sfx_press = None
             self.editor._tl_handle_drag(self._drag_state, x, y,
                                         event.modifiers() & Qt.ShiftModifier)
             return
@@ -596,9 +637,16 @@ class TimelineWidget(QWidget):
 
         had_drag = self._drag_state is not None
         was_sfx = had_drag and self._drag_state[0] == 'sfx'
+        clicked_sfx = was_sfx and self._sfx_press is not None
+        sfx_idx = self._drag_state[1] if was_sfx else None
+        self._sfx_press = None
         self._drag_state = None
         if had_drag:
-            self.editor._tl_handle_release(was_sfx)
+            if clicked_sfx:
+                # 编辑模式下的纯点击 (未拖动): 与非编辑模式一致, 直接试听
+                self._play_sfx_preview(sfx_idx)
+            else:
+                self.editor._tl_handle_release(was_sfx)
         self.setCursor(Qt.ArrowCursor)
 
     def wheelEvent(self, event):
@@ -615,9 +663,12 @@ class TimelineWidget(QWidget):
         elif event.modifiers() & Qt.ShiftModifier:
             delta = 1 if event.angleDelta().y() > 0 else -1
             self._track_h = max(20, min(80, self._track_h + delta * 4))
+            self._clamp_pan_y()
             self.update()
         else:
-            self._pan_y -= int(event.angleDelta().y() / 120) * 30
+            # 滚轮向上 (delta>0) 内容下移 = 回滚到内容开头; 上/下边界由钳制保证
+            self._pan_y += int(event.angleDelta().y() / 120) * 30
+            self._clamp_pan_y()
             self.update()
 
     def contextMenuEvent(self, event):
