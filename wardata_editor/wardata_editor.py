@@ -554,7 +554,6 @@ def load_tkitem_names(tkitem_path: str, tkt: dict) -> dict:
 
 
 TKITEM_REC = 64  # 32 × int16
-TKITEM_CNT = 600
 
 
 def load_tkitem_records(tkitem_path: str, tkt: dict):
@@ -571,7 +570,8 @@ def load_tkitem_records(tkitem_path: str, tkt: dict):
     if not dec or len(dec) < TKITEM_REC:
         return []
     records = []
-    for i in range(TKITEM_CNT):
+    # 按实际记录数加载 (tkitem_expand 后可超过原版 600 条)
+    for i in range(len(dec) // TKITEM_REC):
         off = i * TKITEM_REC
         if off + TKITEM_REC > len(dec): break
         fields = struct.unpack_from('<' + 'h' * 32, dec, off)

@@ -118,9 +118,10 @@ def load_assets(dat_path, tkt_lazy=None, game_dir=None):
             # 兜底: 解压结果不对齐记录边界但原始文件对齐 → 未压缩 raw 数据
             if len(item_raw) % 64 == 0 and (len(item_dec) == 0 or len(item_dec) % 64 != 0):
                 item_dec = item_raw
-            ITEM_CNT = 600
-            for i, fields in enumerate(struct.iter_unpack('<' + 'h' * 32, item_dec)):
-                if i >= ITEM_CNT: break
+            # iter_unpack 要求缓冲区为 64 的整数倍, 截掉不足一条的尾部;
+            # 按实际记录数解析 (tkitem_expand 后可超过原版 600 条)
+            for i, fields in enumerate(struct.iter_unpack('<' + 'h' * 32,
+                                              item_dec[:len(item_dec) // 64 * 64])):
                 item_id, name_id = fields[0], fields[2]
                 if item_id > 0 and name_id > 0:
                     name = tkt_lazy.get(name_id, '')

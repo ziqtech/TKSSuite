@@ -2579,7 +2579,9 @@ class WarpcEditorV2(EditorMainWindow):
             id_lookup, idx_lookup, idx_to_id, id_to_idx = {}, {}, {}, {}
             # 同时构建完整物品记录列表 (供 ItemPickerDialog 使用)
             item_records = []
-            for i in range(600):
+            # 按实际记录数加载 (tkitem_expand 后可超过原版 600 条),
+            # 与 shop_editor 的物品选择器保持一致
+            for i in range(len(dec) // 64):
                 off = i * 64
                 if off + 10 > len(dec):
                     break

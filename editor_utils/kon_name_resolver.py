@@ -33,7 +33,6 @@ SKILL_REC = 94           # TKSkill.dat 每条记录字节数
 SKILL_CNT = 350          # TKSkill 最大记录数
 
 ITEM_REC = 64            # TKItem.dat 每条记录字节数
-ITEM_CNT = 600           # TKItem 最大记录数
 
 KON_REC = 40             # TKKon.dat 每条记录字节数
 KON_CNT = 650            # TKKon 原版记录数 (tkkon_expand 补丁可扩容, 实际条数按文件大小动态推导)
@@ -424,8 +423,9 @@ class KonNameResolver:
 
         # 收集所有物品引用: kon_id → [物品名列表]
         # 一个 kon 可能被多个物品引用 (如 小續命丹、續命丹、大續命丹)
+        # 按实际记录数解析 (tkitem_expand 后可超过原版 600 条)
         item_kon_map: dict[int, list[str]] = {}
-        for i in range(ITEM_CNT):
+        for i in range(len(dec) // ITEM_REC):
             off = i * ITEM_REC
             if off + 14 > len(dec):
                 break

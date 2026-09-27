@@ -1203,7 +1203,8 @@ class SaveEditorApp(EditorMainWindow):
             return {}, {}
         records = {}
         names = {}
-        for i in range(600):
+        # 按实际记录数解析 (tkitem_expand 后可超过原版 600 条)
+        for i in range(len(dec) // 64):
             off = i * 64
             if off + 64 > len(dec):
                 break

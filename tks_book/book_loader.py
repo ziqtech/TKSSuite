@@ -5,7 +5,7 @@
   TKT.dat     → editor_utils.tkt_loader.load_tkt_simple (Big5, XOR 0xFF)
   WarPC.dat   → warpc_editor.load_warpc 同款 (1054B/条 = 527 int16)
   TKSkill.dat → skill_editor.load_skills 同款 (94B/条 × 350)
-  TKItem.dat  → item_editor.load_items 同款 (64B/条 × 600)
+  TKItem.dat  → item_editor.load_items 同款 (64B/条, 按实际记录数)
   Fa.JVG / Mu.JVG → editor_utils.jvg_loader.load_mu_sprites (@JVG 通用)
   SC.GRP + SC.IDX → editor_utils.grp_data (地图背景, 仅 Frame A)
 
@@ -34,7 +34,7 @@ SCENE_NAME_TKT_BASE = 300  # 场景名 TKT ID = 300 + 场景ID
 SKILL_REC = 94
 SKILL_CNT = 350
 ITEM_REC = 64
-ITEM_CNT = 600
+ITEM_CNT = 600            # 原版记录数 (仅作参考; load_items 按实际记录数加载)
 
 SKILL_TYPES = {0: "指令技能", 1: "主动技能", 2: "被动技能", 3: "移动技能"}
 ATK_TYPES = {-1: "近战攻击", 0: "物理攻击", 1: "术法攻击", 10: "召唤攻击"}
@@ -186,7 +186,8 @@ def load_items(fp):
         raw = f.read()
     dec = _decompress_with_fallback(raw, ITEM_REC)
     recs = []
-    for i in range(ITEM_CNT):
+    # 按实际记录数加载 (tkitem_expand 后可超过原版 600 条)
+    for i in range(len(dec) // ITEM_REC):
         off = i * ITEM_REC
         if off + ITEM_REC > len(dec):
             break
