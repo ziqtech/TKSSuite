@@ -58,12 +58,42 @@ class ShopEditorRowTests(unittest.TestCase):
                    name, icon, price, desc in items]
             dlg = ItemPickerDialog(None, rows, return_key='index')
             try:
+                # 无 TKT 时全部为 Item# 占位名, 关闭"仅非空"后扩展记录可见
+                dlg._nonempty_cb.setChecked(False)
                 self.app.processEvents()
                 self.assertEqual(dlg._table.rowCount(), 601)
                 self.assertEqual(dlg._table.item(600, 1).text(), "600")
             finally:
                 dlg.close()
                 dlg.deleteLater()
+
+    def test_item_picker_nonempty_filter_hides_placeholders(self):
+        """默认"仅非空"须与 item_editor.is_empty_item 一致:
+        隐藏 id=0/1 与 Item#/物品# 占位记录, 保留有效物品。"""
+        def _row(idx, item_id, name):
+            return {'index': idx, 'item_id': item_id, 'tab_code': 0,
+                    'name': name, 'equip_type': 0, 'icon': 0,
+                    'price': 0, 'desc': ''}
+
+        rows = [
+            _row(0, 1, 'Item#1'),    # id=1 游戏占位记录
+            _row(1, 0, '(空-1)'),    # 真空槽
+            _row(2, 5, 'Item#5'),    # TKT 缺名占位名
+            _row(3, 6, '物品#6'),    # warpc/save 风格占位名
+            _row(4, 7, '金创药'),     # 有效物品
+        ]
+        dlg = ItemPickerDialog(None, rows, return_key='index')
+        try:
+            self.assertTrue(dlg._nonempty_cb.isChecked())
+            self.assertEqual(dlg._table.rowCount(), 1)
+            self.assertEqual(dlg._table.item(0, 4).text(), '金创药')
+
+            dlg._nonempty_cb.setChecked(False)
+            self.app.processEvents()
+            self.assertEqual(dlg._table.rowCount(), 5)
+        finally:
+            dlg.close()
+            dlg.deleteLater()
 
     def test_shop_save_load_preserves_expanded_rows(self):
         records = [{

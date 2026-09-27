@@ -566,11 +566,17 @@ class ItemPickerDialog(QDialog):
 
         def _is_match(rec):
             name = rec.get('name', '')
-            # 仅非空筛选: item_id>0 即有效物品; 缺少 TKT 名称时仍保留 Item# 占位名。
+            # 仅非空筛选 (与 item_editor.is_empty_item 语义一致):
+            # item_id 0/1 为空槽/游戏占位记录; Item#/物品# 是调用方对
+            # name_id 缺失或 TKT 无名记录填充的占位名, 同属不可选的空记录。
             if ne:
                 item_id = rec.get('item_id', 0)
-                if (item_id <= 0 or not name
-                        or name.startswith("(空") or name == "0"):
+                if item_id in (0, 1):
+                    return False
+                if (not name or name == "0"
+                        or name.startswith("(空")
+                        or name.startswith("Item#")
+                        or name.startswith("物品#")):
                     return False
             # 页面筛选
             if pg and not pg.startswith("全部"):
