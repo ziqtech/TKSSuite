@@ -28,6 +28,7 @@ from core.exe_builder import (  # noqa: E402
     align_up,
 )
 from core.patch_engine import _apply_patch_data_expand  # noqa: E402
+from core.patch_plan import build_patch_plan  # noqa: E402
 from core.tkspatch_loader import load_patch_directory  # noqa: E402
 from ui.generate_exe_dialog import (  # noqa: E402
     GenerateExeDialog, expansion_logical_size,
@@ -38,6 +39,20 @@ from editor_utils.lzss import (  # noqa: E402
 
 
 GAME_DIR = Path(os.environ.get("TKS_GAME_DIR", r"游戏目录（原版）"))
+
+
+def tkitem_table_operation(game_dir):
+    """取 tkitem_expand 组合补丁内的"物品表扩容"操作。
+
+    tkitem_expand 现为 bundle: 定义在包内 data_expand.json, 由 prepare.py 展开
+    为计划里的普通 patch_data_expand 操作 (id = tkitem_expand.table)。
+    """
+    cfg = load_patch_directory(str(LAUNCHER / "patches"),
+                               log_func=lambda *_a: None)
+    plan = build_patch_plan(
+        cfg.patches, selected={"tkitem_expand"},
+        resolve_file=lambda name: str(Path(game_dir) / name))
+    return next(op for op in plan.patches if op.id == "tkitem_expand.table")
 
 
 class RecordExpandBuildTests(unittest.TestCase):
@@ -152,10 +167,12 @@ class RecordExpandBuildTests(unittest.TestCase):
         cfg = load_patch_directory(str(LAUNCHER / "patches"),
                                    log_func=lambda *_a: None)
         for patch_id, data_file in (
-            ("tkitem_expand", "TKItem.dat"),
+            ("tkitem_expand.table", "TKItem.dat"),
             ("tkshop_expand", "TKShop.dat"),
         ):
-            patch_def = next(p for p in cfg.patches if p.id == patch_id)
+            patch_def = (tkitem_table_operation(GAME_DIR)
+                         if patch_id == "tkitem_expand.table"
+                         else next(p for p in cfg.patches if p.id == patch_id))
             logs = []
             ctx = SimpleNamespace(log=logs.append)
             with patch("core.patch_engine.os.path.isfile",
@@ -176,7 +193,7 @@ class RecordExpandBuildTests(unittest.TestCase):
     def test_runtime_redirects_transaction_quantity_array(self):
         cfg = load_patch_directory(str(LAUNCHER / "patches"),
                                    log_func=lambda *_a: None)
-        patch_def = next(p for p in cfg.patches if p.id == "tkitem_expand")
+        patch_def = tkitem_table_operation(GAME_DIR)
 
         expanded = lzss_decompress_dat(
             (GAME_DIR / "TKItem.dat").read_bytes()) + b"\0" * 64
@@ -235,7 +252,7 @@ class RecordExpandBuildTests(unittest.TestCase):
     def test_existing_patch_builds_complete_expansion(self):
         cfg = load_patch_directory(str(LAUNCHER / "patches"),
                                    log_func=lambda *_a: None)
-        patch = next(p for p in cfg.patches if p.id == "tkitem_expand")
+        patch = tkitem_table_operation(GAME_DIR)
         self.assertEqual(patch.type, "patch_data_expand")
         self.assertEqual(patch.old_base, 0x77CBCA)
         self.assertEqual(patch.old_size, 38400)

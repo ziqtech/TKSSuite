@@ -1,116 +1,12 @@
 {
   "_format": 1,
   "_group": "── TKItem 数据扩容 ──",
-  "_comment": "仅在 TKItem.dat 实际超过 38400 字节时启用完整扩容: 注入独立 PE 数据段, 重定向物品表基址/大小及基址+0..63 字段引用; 同时把物品查找、加入背包循环上限改为 1023、装备缓存末索引改为 1022。64KB 数据区容纳 1024 槽, 最后 1 槽作为“未找到物品”路径的哨兵; 数据区前另加 64 字节零填充, 兼容原版 sub_41F318 在空装备缓存时读 TKItem[-1] 的负索引路径。数据区后另设 1024 字节辅助数量数组, 将商店交易显示/加购/结算/清空四类函数从对象 a1+68 重定向到独立数组, 避免 index>=600 越界写坏对象字段。",
-  "type": "patch_data_expand",
+  "_comment": "组合补丁 (bundle): prepare.py 展开为两个操作 —— “物品表扩容”(data_expand.json, 仅 TKItem.dat 超过原版 600 条时生效) 与 “战斗物品图标跟随 Mu.JVG”(icon.json, 仅当物品表实际出现「图标值 ≥ 本目录 Mu2.JVG 总帧数(JVG 头 +0x10, 原版 107)」的条目 且 Mu.JVG 存在时注入)。战斗内的物品图标 (道具菜单详情 / 地面掉落 / 结算页) 一律以战斗初始化载入的 Mu2.JVG 对象取帧, 帧号 = 图标值, 而原版 Mu2 只有 107 帧 (0..75 = 物品图标, 与 Mu 帧 130..205 逐字节相同; 76..106 = 状态图标); 扩展图标只在 Mu.JVG (帧 = 图标值 + 130), 因此需要在战斗初始化把该 JVG 对象原地重载为 Mu.JVG 并把帧表整体前移 130 帧, 同时交换帧表 252/253 还原 Mu2 的状态 11/12 次序。把图标补进 Mu2.JVG (帧号 = 图标值) 的纯数据方案会使该判据不成立 → 不注入, 两条路线互不干扰。逆向依据与机器码清单见 icon_cave.py, 数据扩容细节见 data_expand.json。",
+  "type": "bundle",
   "id": "tkitem_expand",
   "name": "物品数据扩容",
-  "desc": "TKItem.dat 超过原版 600 条时启用扩容: 独立数据段扩至 1024 槽并额外提供 1024 字节商店交易数量数组, 重定向物品表全部字段引用及商店购买相关临时数组；前置 64 字节零填充兼容 TKItem[-1] 读取；原版 600 条不修改",
-  "data_file": "TKItem.dat",
-  "old_base": "0x77CBCA",
-  "old_size": 38400,
-  "section_name": ".tkitem",
-  "needs_lzss": true,
-  "buffer_cap": 65536,
-  "redirect_base_span": 64,
-  "activate_if_expanded": true,
-  "front_pad": 64,
-  "aux_size": 1024,
-  "aux_patches": [
-    {
-      "pattern": "8B 4D F4 8B 55 08 0F BF 01 0F BE 4C 02 44",
-      "expect_count": 1,
-      "aux_offset": 10,
-      "replace": {
-        "3": 15,
-        "4": 191,
-        "5": 1,
-        "6": 15,
-        "7": 190,
-        "8": 12,
-        "9": 5
-      }
-    },
-    {
-      "pattern": "8B 45 F4 0F BF 10 8B 45 08 0F BF 0C 55 5A 75 75 00 0F BE 54 08 44",
-      "expect_count": 1,
-      "aux_offset": 18,
-      "replace": {
-        "6": 15,
-        "7": 191,
-        "8": 12,
-        "9": 85,
-        "10": 90,
-        "11": 117,
-        "12": 117,
-        "13": 0,
-        "14": 15,
-        "15": 190,
-        "16": 20,
-        "17": 13
-      }
-    },
-    {
-      "pattern": "8B 55 08 8D 4C 02 44",
-      "expect_count": 1,
-      "aux_offset": 3,
-      "replace": {
-        "0": 141,
-        "1": 12,
-        "2": 5
-      }
-    },
-    {
-      "pattern": "8B 45 08 8D 54 08 44",
-      "expect_count": 1,
-      "aux_offset": 3,
-      "replace": {
-        "0": 141,
-        "1": 20,
-        "2": 13
-      }
-    },
-    {
-      "pattern": "8B 45 08 8D 50 44 89 55 F8",
-      "expect_count": 2,
-      "aux_offset": 1,
-      "replace": {
-        "0": 184,
-        "5": 137,
-        "6": 69,
-        "7": 248,
-        "8": 144
-      }
-    }
-  ],
-  "bytes_patches": [
-    {
-      "pattern": "81 FA 58 02 00 00",
-      "expect_count": 2,
-      "replace": {
-        "2": 255,
-        "3": 3,
-        "4": 0,
-        "5": 0
-      }
-    },
-    {
-      "pattern": "66 81 7C 24 02 2F 02",
-      "expect_count": 1,
-      "replace": {
-        "5": 254,
-        "6": 3
-      }
-    },
-    {
-      "pattern": "66 81 7D FE 57 02",
-      "expect_count": 2,
-      "replace": {
-        "4": 254,
-        "5": 3
-      }
-    }
-  ],
+  "desc": "TKItem.dat 超过原版 600 条时启用扩容: 独立数据段扩至 1024 槽 + 商店交易数量数组, 并同步修正战斗内物品图标取帧, 使 MOD 追加在 Mu.JVG 的扩展图标在道具菜单/地面掉落/战斗结算页与菜单商店显示一致",
+  "prepare_file": "prepare.py",
   "optional": false,
   "default_checked": true,
   "format": "TKSPATCH",

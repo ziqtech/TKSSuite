@@ -35,6 +35,7 @@ from core.config_loader import PatchDef                         # noqa: E402
 from core.exe_builder import ExeBuilder                         # noqa: E402
 from core.mod_distribution import ModBuildWorkspace             # noqa: E402
 from core.mod_loader import ModInfo, allowed_mod_configs         # noqa: E402
+from core.patch_plan import build_patch_plan                     # noqa: E402
 from core.tkspatch_loader import load_patch_directory            # noqa: E402
 from editor_utils.lzss import (                                 # noqa: E402
     lzss_compress_dat, lzss_decompress_dat,
@@ -99,9 +100,10 @@ class GenerateExeSupportTests(unittest.TestCase):
         # 单模式 / 值扫描 两种旧形态不受影响
         self.assertEqual(file_build_label(
             next(x for x in _load_patches() if x.id == "tkdefunit_count")), '立即数')
+        # tkitem_expand 现为组合补丁 (物品表扩容 + 战斗图标取帧修正)
         self.assertEqual(file_build_label(
             next(x for x in _load_patches() if x.id == "tkitem_expand")),
-            '数据段注入')
+            '组合补丁')
         self.assertEqual(file_build_label(
             next(x for x in _load_patches() if x.id == "tkshop_expand")),
             '数据段注入')
@@ -197,10 +199,19 @@ class GenerateExeSupportTests(unittest.TestCase):
                                 selected_tool="cnc-ddraw")
         try:
             dlg._game_edit.setText(str(GAME_DIR))
-            for patch_id in ("tkitem_expand", "tkshop_expand"):
-                patch = next(p for p in patches if p.id == patch_id)
+            # tkitem_expand 为组合补丁: 物品表扩容是包内 tkitem_expand.table 操作
+            plan = build_patch_plan(
+                patches, selected={"tkitem_expand"},
+                resolve_file=lambda name: str(GAME_DIR / name))
+            targets = {
+                "tkitem_expand": next(op for op in plan.patches
+                                      if op.id == "tkitem_expand.table"),
+                "tkshop_expand": next(p for p in patches
+                                      if p.id == "tkshop_expand"),
+            }
+            for patch_id, patch_def in targets.items():
                 self.assertIsNone(
-                    dlg._build_data_section(patch),
+                    dlg._build_data_section(patch_def),
                     f"{patch_id} 不应改动原版大小数据")
         finally:
             dlg.close()
