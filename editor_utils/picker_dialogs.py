@@ -10,12 +10,13 @@
 """
 import json
 
-from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QColor, QFont, QIcon
+from PySide6.QtCore import QPointF, Qt, QSize
+from PySide6.QtGui import QColor, QFont, QIcon, QPalette
 from PySide6.QtWidgets import (
-    QAbstractItemView, QCheckBox, QDialog, QFrame, QHBoxLayout,
+    QAbstractItemView, QApplication, QCheckBox, QDialog, QFrame, QHBoxLayout,
     QHeaderView, QLabel, QLineEdit, QPushButton, QScrollArea,
-    QSpinBox, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
+    QSpinBox, QStyle, QStyleOptionViewItem, QStyledItemDelegate,
+    QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from editor_utils.ui_helpers import resolve_config_path, EditorComboBox, pil_to_pixmap
@@ -25,6 +26,9 @@ from editor_utils.search_input import SearchInput
 from editor_utils.theme_manager import business_colors
 from editor_utils.theme_switcher import apply_theme_to_window
 from editor_utils.window_theme import apply_titlebar_theme
+from editor_utils.tkt_display import (
+    color_segments_single_line, item_name_color_text, strip_tkt_macros,
+)
 
 
 # 状态常量已迁移至纯数据模块 game_defs (webui 无 Qt 环境亦需导入);
@@ -346,6 +350,49 @@ def _use_right_label(val, page, opts=None):
     return ", ".join(sel) if sel else "(无)"
 
 
+class ColorSegmentsDelegate(QStyledItemDelegate):
+    """说明列委托: 文本中仅部分词语带宏颜色码时按段绘制颜色
+    (与编辑器右侧面板的富文本效果一致)。
+
+    段数据存在 item 的 Qt.UserRole; 无段数据的行走原生绘制,
+    背景/选中/悬停/省略号行为与普通单元格保持一致。
+    """
+
+    def paint(self, painter, option, index):
+        segs = index.data(Qt.ItemDataRole.UserRole)
+        if not segs:
+            super().paint(painter, option, index)
+            return
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        opt.text = ""  # 背景与选中态交由样式绘制, 文字自绘
+        widget = opt.widget
+        style = widget.style() if widget else QApplication.style()
+        style.drawControl(QStyle.CE_ItemViewItem, opt, painter, widget)
+        text_rect = style.subElementRect(QStyle.SE_ItemViewItemText, opt, widget)
+        fm = opt.fontMetrics
+        plain = ''.join(t for t, _ in segs)
+        elided = fm.elidedText(plain, Qt.ElideRight, max(10, text_rect.width()))
+        if opt.state & QStyle.State_Selected:
+            default_color = opt.palette.color(QPalette.HighlightedText)
+        else:
+            default_color = opt.palette.color(QPalette.Text)
+        x = text_rect.x()
+        y = text_rect.y() + (text_rect.height() - fm.height()) / 2 + fm.ascent()
+        painter.save()
+        painter.setFont(opt.font)
+        pos = 0
+        for t, c in segs:
+            chunk = elided[pos:pos + len(t)]
+            pos += len(t)
+            if not chunk:
+                break
+            painter.setPen(QColor(c) if c else default_color)
+            painter.drawText(QPointF(x, y), chunk)
+            x += fm.horizontalAdvance(chunk)
+        painter.restore()
+
+
 class ItemPickerDialog(QDialog):
     """统一物品选择对话框 — 完整物品列表表格 + 页面号/权限/仅非空 筛选。
 
@@ -486,6 +533,8 @@ class ItemPickerDialog(QDialog):
             )
             self._table.setHorizontalHeaderLabels(
                 ['图标', '#', 'ID', '页面', '物品名称', '权限', '价格', '物品说明'])
+            # 说明列分段着色绘制 (仅部分词语带宏颜色码时按段显示颜色)
+            self._table.setItemDelegateForColumn(7, ColorSegmentsDelegate(self._table))
             self._table.setIconSize(QSize(36, 36))
             # 说明文本可能很长: 单行省略显示, 悬停查看完整内容
             self._table.setWordWrap(False)
@@ -617,15 +666,29 @@ class ItemPickerDialog(QDialog):
             self._table.setItem(row, 1, QTableWidgetItem(str(idx)))
             self._table.setItem(row, 2, QTableWidgetItem(str(item_id)))
             self._table.setItem(row, 3, QTableWidgetItem(_PAGE_NAMES.get(tab, '?')))
-            self._table.setItem(row, 4, QTableWidgetItem(name))
+            # 物品名称: 配置了 FCOLOR 颜色码则按色号显示, 未配置保持默认色
+            nm_txt, nm_color = item_name_color_text(name)
+            nm_item = QTableWidgetItem(nm_txt)
+            if nm_color:
+                nm_item.setForeground(QColor(nm_color))
+            self._table.setItem(row, 4, nm_item)
             rt = _use_right_label(equip_type, tab,
                                   self._use_right_options.get(tab))
             self._table.setItem(row, 5, QTableWidgetItem(rt))
             self._table.setItem(row, 6, QTableWidgetItem(str(rec.get('price', 0))))
+            # 物品说明: 只有部分词语带宏颜色码时按段着色 (Qt.UserRole 存段数据,
+            # 由 ColorSegmentsDelegate 分段绘制); 无颜色码走原生绘制保持默认色。
+            # 必须先剥离宏再单行化 — 色号 9-13/28-32 的参数字节本身是空白字符,
+            # 先 split() 会把参数字节当空白吃掉, 留下悬空控制字节 (方框)。
             desc_full = str(rec.get('desc', '') or '')
-            desc_item = QTableWidgetItem(self._desc_line(rec))
+            desc_segs = color_segments_single_line(desc_full)
+            if any(c for _, c in desc_segs):
+                desc_item = QTableWidgetItem(''.join(t for t, _ in desc_segs))
+                desc_item.setData(Qt.ItemDataRole.UserRole, desc_segs)
+            else:
+                desc_item = QTableWidgetItem(' '.join(desc_full.split()))
             if desc_full:
-                desc_item.setToolTip(desc_full)  # 悬停查看多行完整说明
+                desc_item.setToolTip(strip_tkt_macros(desc_full))  # 悬停查看多行完整说明
             self._table.setItem(row, 7, desc_item)
 
     def _refresh_simple(self):

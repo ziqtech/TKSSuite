@@ -100,6 +100,7 @@ from editor_utils.lzss import lzss_decompress_dat
 from editor_utils.jvg_loader import load_mu_sprites, get_sprite_pixmap
 from editor_utils.rgb565 import rgb565_to_rgba
 from editor_utils.tkt_loader import load_tkt_simple
+from editor_utils.tkt_display import strip_tkt_macros
 from editor_utils.shared_state import pick_tks_directory
 from editor_utils.mod_exporter import (
     compute_crc32, generate_mod_json, pack_tksmod, ModMetadataDialog, safe_mod_filename,
@@ -556,12 +557,17 @@ def load_tkitem_names(tkitem_path: str, tkt: dict) -> dict:
 TKITEM_REC = 64  # 32 × int16
 
 
-def load_tkitem_records(tkitem_path: str, tkt: dict):
+def load_tkitem_records(tkitem_path: str, tkt: dict, tkt_full: dict | None = None):
     """加载 TKItem.dat 完整记录，返回 list[dict]。
     每条: {'index', 'item_id', 'tab_code', 'name', 'desc', 'equip_type', 'icon', 'price'}
+
+    tkt_full: 完整多行 TKT 文本 (full_strip 版), 说明 desc 优先取自它 —
+    物品选择弹窗的说明列与 shop_editor 一致显示完整多行说明;
+    缺省回退到截断版 tkt (仅首行)。
     """
     if not tkitem_path or not os.path.exists(tkitem_path):
         return []
+    desc_tkt = tkt_full if tkt_full is not None else tkt
     with open(tkitem_path, 'rb') as f:
         raw = f.read()
     dec = lzss_decompress_dat(raw)
@@ -595,7 +601,7 @@ def load_tkitem_records(tkitem_path: str, tkt: dict):
             'item_id': item_id,
             'tab_code': tab_code,
             'name': name,
-            'desc': tkt.get(desc_id, "") if desc_id > 0 else "",
+            'desc': desc_tkt.get(desc_id, "") if desc_id > 0 else "",
             'equip_type': equip_type,
             'icon': icon,
             'price': price,
@@ -1060,7 +1066,9 @@ class WarDataEditorV2(EditorMainWindow):
         self._icon_pixmaps.clear()
         if self.tkitem_path:
             self.tkitem_names, self.tkitem_names_by_id = load_tkitem_names(self.tkitem_path, self.tkt)
-            self.tkitem_records = load_tkitem_records(self.tkitem_path, self.tkt)
+            # 完整多行 TKT: 物品选择弹窗说明列与 shop_editor 一致
+            tkt_full = load_tkt_simple(self.tkt_path, full_strip=True)
+            self.tkitem_records = load_tkitem_records(self.tkitem_path, self.tkt, tkt_full=tkt_full)
         else:
             self.tkitem_names, self.tkitem_names_by_id, self.tkitem_records = {}, {}, []
         self._wsc_cache.clear()
@@ -1168,7 +1176,9 @@ class WarDataEditorV2(EditorMainWindow):
                     warpc_records = load_warpc_records(warpc_path)
                 if tkitem_path:
                     tkitem_names, tkitem_names_by_id = load_tkitem_names(tkitem_path, tkt)
-                    tkitem_records = load_tkitem_records(tkitem_path, tkt)
+                    # 完整多行 TKT: 物品选择弹窗说明列与 shop_editor 一致
+                    tkt_full = load_tkt_simple(tkt_path, full_strip=True)
+                    tkitem_records = load_tkitem_records(tkitem_path, tkt, tkt_full=tkt_full)
             war_scene_names = load_war_scene_names(os.path.dirname(wardata_path), tkt)
             return (records, warway_records, tkt, war_scene_names, warpc_names, warpc_records,
                     tkitem_names, tkitem_names_by_id, tkitem_records)
@@ -2584,7 +2594,9 @@ class WarDataEditorV2(EditorMainWindow):
             item.setTextAlignment(Qt.AlignCenter)
             tbl.setItem(i, 3, item)
             if tid == 10000: self.dt_name_labels[i].setText("金钱")
-            elif tid and tid in self.tkitem_names_by_id: self.dt_name_labels[i].setText(self.tkitem_names_by_id[tid][:12])
+            elif tid and tid in self.tkitem_names_by_id:
+                # 剥离颜色宏 (控制字节会显示为方框), 先剥离后截断
+                self.dt_name_labels[i].setText(strip_tkt_macros(self.tkitem_names_by_id[tid])[:12])
             elif tid: self.dt_name_labels[i].setText(f"Item#{tid}")
             else: self.dt_name_labels[i].setText("")
             if i < 10:
@@ -2635,7 +2647,9 @@ class WarDataEditorV2(EditorMainWindow):
             tbl.setItem(row, 3, id_item)
             tbl.blockSignals(False)
             if new_tid == 10000: self.dt_name_labels[row].setText("金钱")
-            elif new_tid and new_tid in self.tkitem_names_by_id: self.dt_name_labels[row].setText(self.tkitem_names_by_id[new_tid][:12])
+            elif new_tid and new_tid in self.tkitem_names_by_id:
+                # 剥离颜色宏 (控制字节会显示为方框), 先剥离后截断
+                self.dt_name_labels[row].setText(strip_tkt_macros(self.tkitem_names_by_id[new_tid])[:12])
             elif new_tid: self.dt_name_labels[row].setText(f"Item#{new_tid}")
             else: self.dt_name_labels[row].setText("")
 

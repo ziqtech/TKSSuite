@@ -64,6 +64,7 @@ from editor_utils.ui_helpers import themed_question, update_path_labels, EditorC
 from editor_utils.search_utils import search_match
 from editor_utils.search_input import SearchInput
 from editor_utils.task_runner import run_background, is_running
+from editor_utils.tkt_display import color_tags_html, item_name_color_text
 
 # ── 本地别名: 保持向后兼容 ──
 def lzss_decompress(data):
@@ -700,13 +701,19 @@ class ShopEditorWindow(EditorMainWindow):
             item_iref = QTableWidgetItem()
             item_iref.setData(Qt.DisplayRole, rec['item_ref'])
 
-            item_iname = QTableWidgetItem(iname)
+            # 物品名称: 配置了 FCOLOR 颜色码则优先按色号显示, 未配置保持现有着色
+            iname_txt, iname_color = item_name_color_text(iname)
+            item_iname = QTableWidgetItem(iname_txt)
             item_cond = QTableWidgetItem(cond_str)
 
             # 条件着色
             if rec['condition'] == 1:
                 for col_item in (item_idx, item_aid, item_aname, item_iref, item_iname, item_cond):
                     col_item.setForeground(color_random)
+
+            # 颜色码优先于随机抽选的条件着色
+            if iname_color:
+                item_iname.setForeground(QColor(iname_color))
 
             self.table.setItem(r, 0, icon_item)
             self.table.setItem(r, 1, item_idx)
@@ -857,7 +864,9 @@ class ShopEditorWindow(EditorMainWindow):
         # item
         self.lbl_editing_item_idx.setText(str(rec['item_ref']))
         iname = self.item_names.get(rec['item_ref'], f"Item#{rec['item_ref']}")
-        self.lbl_item_name.setText(iname)
+        # 名称支持 FCOLOR 颜色码渲染, 无颜色码时保持原样
+        iname_html = color_tags_html(iname)
+        self.lbl_item_name.setText(iname_html if iname_html else iname)
         self._update_compat_label(rec['area_id'], rec['item_ref'])
 
         # condition
@@ -982,7 +991,9 @@ class ShopEditorWindow(EditorMainWindow):
             picked = dialog.selected_value
             if picked >= 0:
                 self.lbl_editing_item_idx.setText(str(picked))
-                self.lbl_item_name.setText(self.item_names.get(picked, f"Item#{picked}"))
+                picked_name = self.item_names.get(picked, f"Item#{picked}")
+                picked_html = color_tags_html(picked_name)
+                self.lbl_item_name.setText(picked_html if picked_html else picked_name)
                 self._on_area_changed()  # 更新兼容性验证
 
     def _apply_edit(self):

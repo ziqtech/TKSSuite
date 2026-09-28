@@ -65,6 +65,7 @@ from editor_utils.ui_helpers import themed_question, confirm_close, themed_messa
 from editor_utils.tab_widget import EditorTabWidget
 from editor_utils.flow_layout import FlowLayout
 from editor_utils.adaptive_table import AdaptiveTableWidget
+from editor_utils.tkt_display import strip_tkt_macros
 from editor_utils.version import format_title
 from editor_utils.shared_state import pick_tks_directory
 from editor_utils.mod_exporter import diff_records
@@ -2172,7 +2173,8 @@ class MatEditorApp(MatModIOMixin, MatScriptPanelMixin, EditorMainWindow):
             if isinstance(lbl, QLabel):
                 item_id = rec[f'd{di}']
                 if item_id and item_id in self._data.item_names:
-                    lbl.setText(self._data.item_names[item_id])
+                    # 剥离宏代码 (字面 <FCOLOR,n> 等标签会原样显示为文字), 保持默认色
+                    lbl.setText(strip_tkt_macros(self._data.item_names[item_id]))
                 elif item_id:
                     lbl.setText(f"物品 #{item_id}")
                 else:
@@ -2242,7 +2244,8 @@ class MatEditorApp(MatModIOMixin, MatScriptPanelMixin, EditorMainWindow):
                 if isinstance(lbl, QLabel):
                     item_id = rec[f'd{di}']
                     if item_id and item_id in self._data.item_names:
-                        lbl.setText(self._data.item_names[item_id])
+                        # 剥离宏代码 (字面 <FCOLOR,n> 等标签会原样显示为文字), 保持默认色
+                        lbl.setText(strip_tkt_macros(self._data.item_names[item_id]))
                     elif item_id:
                         lbl.setText(f"物品 #{item_id}")
                     else:

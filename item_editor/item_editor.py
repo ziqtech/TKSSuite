@@ -42,7 +42,7 @@ import struct
 import sys
 
 from PySide6.QtCore import QSize, Qt, QTranslator
-from PySide6.QtGui import QAction, QIcon, QIntValidator, QKeySequence, QPainter
+from PySide6.QtGui import QAction, QColor, QIcon, QIntValidator, QKeySequence, QPainter
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QDialog,
     QFileDialog, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QLabel,
@@ -64,6 +64,7 @@ from editor_utils.picker_dialogs import (
     STATUS_ICON_BASE, STATUS_NAMES, BitmaskPickerDialog, SkillPickerDialog,
     StatusPickerDialog, TktPickerDialog,
 )
+from editor_utils.tkt_display import color_tags_html, item_name_color_text, strip_tkt_macros
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.theme_switcher import (
     apply_theme_to_window, toggle_theme_in_family,
@@ -893,7 +894,12 @@ class ItemEditorApp(FieldUndoMixin, EditorMainWindow):
             self.table.setItem(row, 1, QTableWidgetItem(str(r['index'])))
             self.table.setItem(row, 2, QTableWidgetItem(str(r['item_id'])))
             self.table.setItem(row, 3, QTableWidgetItem(PAGE_NAMES.get(r['tab_code'], '?')))
-            self.table.setItem(row, 4, QTableWidgetItem(item_display_name(r, self.tkt)))
+            # 物品名称: 配置了 FCOLOR 颜色码则按色号显示, 未配置保持默认色
+            nm_txt, nm_color = item_name_color_text(item_display_name(r, self.tkt))
+            nm_item = QTableWidgetItem(nm_txt)
+            if nm_color:
+                nm_item.setForeground(QColor(nm_color))
+            self.table.setItem(row, 4, nm_item)
             self.table.setItem(row, 5, QTableWidgetItem(rt))
             self.table.setItem(row, 6, QTableWidgetItem(str(r['price'])))
         self.table.blockSignals(False)
@@ -994,13 +1000,15 @@ class ItemEditorApp(FieldUndoMixin, EditorMainWindow):
             f"页面号={PAGE_NAMES.get(rec['tab_code'],'?')}   "
             f"名称={item_display_name(rec, self.tkt)}")
 
-        # 预览
+        # 预览 (名称/说明支持 FCOLOR 颜色码渲染, 无颜色码时保持原样)
         nid = rec.get('name_id', 0) or 0
         did = rec.get('desc_id', 0) or 0
         n_txt = self.tkt.get(int(nid), "") if nid > 0 else ""
-        self.preview_name.setText(n_txt if n_txt else "(无 / TKT 未提供)")
+        n_html = color_tags_html(n_txt)
+        self.preview_name.setText(n_html if n_html else (n_txt if n_txt else "(无 / TKT 未提供)"))
         d_txt = self.tkt_full.get(int(did), "") if did > 0 else ""
-        self.preview_desc.setText(d_txt if d_txt else "(无 / TKT 未提供)")
+        d_html = color_tags_html(d_txt)
+        self.preview_desc.setText(d_html if d_html else (d_txt if d_txt else "(无 / TKT 未提供)"))
 
         # 元数据
         page_str = PAGE_NAMES.get(rec['tab_code'], '?')
@@ -1049,7 +1057,8 @@ class ItemEditorApp(FieldUndoMixin, EditorMainWindow):
             if ft == 'tkt':
                 tid = int(val) if val else 0
                 txt = self.tkt.get(tid, "") if tid > 0 else ""
-                t = txt.split('\n')[0] if txt else ""
+                # 预览文本剥离宏代码 (控制字节会显示为方框), 保持界面默认色
+                t = strip_tkt_macros(txt.split('\n')[0]) if txt else ""
                 self.extra_map[fn].setText((t[:12]+'...') if len(t) > 12 else t)
             elif ft == 'use_right':
                 page = rec.get('tab_code', 0)

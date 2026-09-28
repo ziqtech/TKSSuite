@@ -91,6 +91,7 @@ from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm
 from editor_utils.version import format_title
 from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat, lzss_decompress_save, lzss_compress_save
 from editor_utils.tkt_loader import load_tkt_simple
+from editor_utils.tkt_display import strip_tkt_macros
 from editor_utils.shared_state import pick_tks_directory
 from editor_utils.skill_extension import (
     GAME_ACTOR_CAPACITY,
@@ -3006,7 +3007,8 @@ class WarpcEditorV2(EditorMainWindow):
                 if idx == -1:
                     self._edit_extras[fn].setText('(未装备)')
                 elif idx in self.item_idx_names:
-                    self._edit_extras[fn].setText(self.item_idx_names[idx])
+                    # 剥离颜色宏 (控制字节会显示为方框), 保持默认色
+                    self._edit_extras[fn].setText(strip_tkt_macros(self.item_idx_names[idx]))
                 else:
                     self._edit_extras[fn].setText(f'物品#{idx}')
 
@@ -3016,7 +3018,7 @@ class WarpcEditorV2(EditorMainWindow):
                 if iid == -1:
                     self._edit_extras[fn].setText('(未装备)')
                 elif iid in self.item_names:
-                    self._edit_extras[fn].setText(self.item_names[iid])
+                    self._edit_extras[fn].setText(strip_tkt_macros(self.item_names[iid]))
                 else:
                     self._edit_extras[fn].setText(f'物品#{iid}')
 
@@ -3026,7 +3028,7 @@ class WarpcEditorV2(EditorMainWindow):
                 if iid == 0:
                     self._edit_extras[fn].setText('(无)')
                 elif iid in self.item_names:
-                    self._edit_extras[fn].setText(self.item_names[iid])
+                    self._edit_extras[fn].setText(strip_tkt_macros(self.item_names[iid]))
                 else:
                     self._edit_extras[fn].setText(f'物品#{iid}')
 
@@ -3146,10 +3148,12 @@ class WarpcEditorV2(EditorMainWindow):
             if fn in self._edit_extras:
                 if is_idx:
                     nm = self.item_idx_names.get(sel_val, '')
-                    self._edit_extras[fn].setText(nm if sel_val != -1 else '(未装备)')
+                    self._edit_extras[fn].setText(
+                        strip_tkt_macros(nm) if sel_val != -1 else '(未装备)')
                 else:
                     nm = self.item_names.get(sel_val, '')
-                    self._edit_extras[fn].setText(nm if sel_val != -1 and sel_val != 0 else '(未装备)')
+                    self._edit_extras[fn].setText(
+                        strip_tkt_macros(nm) if sel_val != -1 and sel_val != 0 else '(未装备)')
             # 同步配对字段 (equip_idx ↔ equip_id)
             slot = fn[-1]
             if is_idx:
@@ -3164,9 +3168,9 @@ class WarpcEditorV2(EditorMainWindow):
                 if pair_val == -1:
                     self._edit_extras[pair_fn].setText('(未装备)')
                 elif is_idx:
-                    self._edit_extras[pair_fn].setText(self.item_names.get(pair_val, f'物品#{pair_val}'))
+                    self._edit_extras[pair_fn].setText(strip_tkt_macros(self.item_names.get(pair_val, f'物品#{pair_val}')))
                 else:
-                    self._edit_extras[pair_fn].setText(self.item_idx_names.get(pair_val, f'物品#{pair_val}'))
+                    self._edit_extras[pair_fn].setText(strip_tkt_macros(self.item_idx_names.get(pair_val, f'物品#{pair_val}')))
 
     def _pick_flags(self, fn):
         if fn not in FLAG_DEFS: return

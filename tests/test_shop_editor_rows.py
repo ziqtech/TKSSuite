@@ -139,6 +139,57 @@ class ShopEditorRowTests(unittest.TestCase):
             window.deleteLater()
             self.app.processEvents()
 
+    def test_item_name_fcolor_renders_and_overrides_random_color(self):
+        from editor_utils.game_defs import GAME_COLORS
+        window = ShopEditorWindow()
+        try:
+            window.item_names = {123: f"{chr(2)}{chr(14)}金烏劍"}
+            window.records = [window._make_empty_record(i) for i in range(2)]
+            window.records[0].update({'area_id': 3, 'item_ref': 123, 'condition': 0})
+            window.records[1].update({'area_id': 3, 'item_ref': 123, 'condition': 1})
+            window._apply_filter()
+
+            # 名称列: 宏剥离 + 颜色码着色; 随机抽选行 (条件橙色) 也以颜色码优先
+            for row in range(2):
+                item = window.table.item(row, 5)
+                self.assertEqual(item.text(), "金烏劍")
+                self.assertEqual(item.foreground().color().name().lower(),
+                                 GAME_COLORS[14].lower())
+            # 无颜色码的随机抽选行仍保持条件橙色
+            window.item_names[124] = "普通物品"
+            window.records[0].update({'item_ref': 124, 'condition': 1})
+            window._apply_filter()
+            self.assertEqual(
+                window.table.item(0, 5).foreground().color().name(),
+                window.table.item(0, 6).foreground().color().name())
+        finally:
+            window._dirty = False
+            window.close()
+            window.deleteLater()
+            self.app.processEvents()
+
+    def test_right_panel_item_name_fcolor_html(self):
+        from editor_utils.game_defs import GAME_COLORS
+        window = ShopEditorWindow()
+        try:
+            window.item_names = {123: f"{chr(2)}{chr(14)}金烏劍", 124: "普通物品"}
+            window.records = [window._make_empty_record(i) for i in range(2)]
+            window.records[0].update({'area_id': 3, 'item_ref': 123})
+            window.records[1].update({'area_id': 3, 'item_ref': 124})
+
+            window._populate_edit(window.records[0])
+            text = window.lbl_item_name.text()
+            self.assertIn(GAME_COLORS[14].lower(), text.lower())
+            self.assertNotIn(chr(2), text)  # 无控制字节 (方框来源)
+
+            window._populate_edit(window.records[1])
+            self.assertEqual(window.lbl_item_name.text(), "普通物品")
+        finally:
+            window._dirty = False
+            window.close()
+            window.deleteLater()
+            self.app.processEvents()
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
