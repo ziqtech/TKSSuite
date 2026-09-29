@@ -82,6 +82,7 @@ from editor_utils.ui_helpers import (
     make_fake_input, update_path_labels, EditorComboBox, set_themed_icon,
     backup_existing_file,
     show_field_ref,
+    FlowLayout,
 )
 from editor_utils.tab_widget import EditorTabWidget
 from editor_utils.adaptive_table import AdaptiveTableWidget
@@ -823,54 +824,69 @@ class ActEditorV2(EditorMainWindow):
         inner.layout().setSpacing(4)
         parent_layout.addWidget(inner, 1)
 
-        # 控制栏分三行：单行会把中央栏的最小宽度推到 1000px 以上，
-        # 进而在默认窗口下挤压左侧列表。第一行放播放/方向/周期，
-        # 第二行放播放头和编辑操作，第三行放预览标注与受击方距离。
-        ctrl = QVBoxLayout()
-        ctrl.setContentsMargins(0, 0, 0, 0)
-        ctrl.setSpacing(2)
+        # 控制栏用流式布局: 控件按"逻辑组"从左到右排列, 宽度不足时整组折行。
+        # 默认 1680×960 的中央栏宽度自然折成 3 行 (与旧的三行版式等价),
+        # 最大化/2K 宽屏时利用右侧空白自动减少换行; 折行只发生在组间,
+        # "方向:"这类标签与控件不会被拆到两行。窄窗口下也不会把中央栏
+        # 最小宽度推高挤压左侧列表。
+        ctrl_host = QWidget()
+        ctrl_flow = FlowLayout(ctrl_host, spacing=6)
+        # 旧控制栏边距为 0, 右侧固定项才能真正贴齐栏右缘
+        ctrl_flow.setContentsMargins(0, 0, 0, 0)
+        inner.layout().addWidget(ctrl_host)
 
-        playback_ctrl = QHBoxLayout()
-        playback_ctrl.setSpacing(4)
+        # 应用修改/重置固定在控制栏右缘 (旧版行为), 不参与流式换行
+        pin_w = QWidget(ctrl_host)
+        pin_bar = QHBoxLayout(pin_w)
+        pin_bar.setContentsMargins(0, 0, 0, 0)
+        pin_bar.setSpacing(4)
+        pin_bar.addWidget(QPushButton("应用修改", clicked=self._apply_edit))
+        pin_bar.addWidget(QPushButton("重置", clicked=self._reset_edit))
+        ctrl_flow.set_right_pinned(pin_w)
+
+        def _group(*widgets):
+            g = QWidget()
+            gl = QHBoxLayout(g)
+            gl.setContentsMargins(0, 0, 0, 0)
+            gl.setSpacing(4)
+            for wg in widgets:
+                gl.addWidget(wg)
+            ctrl_flow.addWidget(g)
+            return g
 
         btn_first = QPushButton("", clicked=self._tl_goto_first)
         set_themed_icon(btn_first, "first")
         btn_first.setToolTip("跳至首帧 (Ctrl+◀◀)")
-        playback_ctrl.addWidget(btn_first)
 
         btn_prev = QPushButton("", clicked=self._tl_step_prev)
         set_themed_icon(btn_prev, "prev")
         btn_prev.setToolTip("后退一帧 (J / ←)")
-        playback_ctrl.addWidget(btn_prev)
 
         btn_play = QPushButton("", clicked=self._preview_play)
         set_themed_icon(btn_play, "play")
         btn_play.setToolTip("播放动画 (L)")
-        playback_ctrl.addWidget(btn_play)
 
         btn_stop = QPushButton("", clicked=self._preview_stop)
         set_themed_icon(btn_stop, "stop")
         btn_stop.setToolTip("停止播放 (K)")
-        playback_ctrl.addWidget(btn_stop)
 
         btn_last = QPushButton("", clicked=self._tl_goto_last)
         set_themed_icon(btn_last, "last")
         btn_last.setToolTip("跳至末帧 (Ctrl+▶▶)")
-        playback_ctrl.addWidget(btn_last)
+        _group(btn_first, btn_prev, btn_play, btn_stop, btn_last)
 
-        playback_ctrl.addSpacing(4)
-        playback_ctrl.addWidget(QLabel("方向:"))
-
+        dir_lbl = QLabel("方向:")
         self._dir_btns = QButtonGroup(self)
+        dir_rbs = []
         for d in range(4):
             rb = QRadioButton(DIRECTION_SHORT[d])
             rb.setChecked(d == 0)
             self._dir_btns.addButton(rb, d)
-            playback_ctrl.addWidget(rb)
+            dir_rbs.append(rb)
         self._dir_btns.buttonClicked.connect(self._on_dir_changed)
+        _group(dir_lbl, *dir_rbs)
 
-        playback_ctrl.addSpacing(4)
-        playback_ctrl.addWidget(QLabel("周期:"))
+        period_lbl = QLabel("周期:")
         self._speed_spin = QSpinBox()
         self._speed_spin.setRange(10, 500)
         self._speed_spin.setValue(120)
@@ -879,25 +895,19 @@ class ActEditorV2(EditorMainWindow):
         # 把 QSpinBox 内部的 QLineEdit 压成几乎不可见，导致无法输入。
         # 周期范围是 10~500，固定留出三位数字的可编辑区域。
         self._speed_spin.setFixedWidth(80)
-        playback_ctrl.addWidget(self._speed_spin)
-        playback_ctrl.addStretch()
-        ctrl.addLayout(playback_ctrl)
+        _group(period_lbl, self._speed_spin)
 
-        edit_ctrl = QHBoxLayout()
-        edit_ctrl.setSpacing(4)
         btn_zero = QPushButton("归零", clicked=self._tl_reset_playhead)
         btn_zero.setToolTip("播放头归零")
-        edit_ctrl.addWidget(btn_zero)
         self._tl_tick_lbl = QLabel("tick: 0")
-        edit_ctrl.addWidget(self._tl_tick_lbl)
+        _group(btn_zero, self._tl_tick_lbl)
 
         self._edit_mode_cb = QCheckBox("编辑模式")
         self._edit_mode_cb.setChecked(False)
         self._edit_mode_cb.stateChanged.connect(self._toggle_edit_mode)
-        edit_ctrl.addWidget(self._edit_mode_cb)
+        _group(self._edit_mode_cb)
 
-        edit_ctrl.addSpacing(8)
-        edit_ctrl.addWidget(QLabel("飘字效果预览:"))
+        float_lbl = QLabel("飘字效果预览:")
         self._float_type_cb = QComboBox()
         for ft in FLOAT_TYPES:
             self._float_type_cb.addItem(ft['label'], ft['id'])
@@ -913,10 +923,9 @@ class ActEditorV2(EditorMainWindow):
             "选择预览时使用的飘字类型；颜色与文案对应原版战斗实际效果")
         self._float_type_cb.currentIndexChanged.connect(
             self._on_float_type_changed)
-        edit_ctrl.addWidget(self._float_type_cb)
+        _group(float_lbl, self._float_type_cb)
 
-        edit_ctrl.addSpacing(4)
-        edit_ctrl.addWidget(QLabel("数值:"))
+        total_lbl = QLabel("数值:")
         self._float_total_spin = QSpinBox()
         self._float_total_spin.setRange(1, 999999)
         self._float_total_spin.setValue(DEFAULT_FLOAT_TOTAL)
@@ -927,7 +936,6 @@ class ActEditorV2(EditorMainWindow):
             "默认 999，对应原版编辑器测试值")
         self._float_total_spin.valueChanged.connect(
             self._on_float_total_changed)
-        edit_ctrl.addWidget(self._float_total_spin)
         self._float_effect_cb = QCheckBox("伤害飘字")
         self._float_effect_cb.setChecked(True)
         self._float_effect_cb.setToolTip(
@@ -935,35 +943,26 @@ class ActEditorV2(EditorMainWindow):
             "关闭时飘字类型下拉框与数值框一并不生效")
         self._float_effect_cb.stateChanged.connect(
             self._on_float_effect_toggled)
-        edit_ctrl.addWidget(self._float_effect_cb)
+        _group(total_lbl, self._float_total_spin, self._float_effect_cb)
         self._sync_float_total_enabled()
 
-        edit_ctrl.addStretch()
-        edit_ctrl.addWidget(QPushButton("应用修改", clicked=self._apply_edit))
-        edit_ctrl.addWidget(QPushButton("重置", clicked=self._reset_edit))
-        ctrl.addLayout(edit_ctrl)
-
-        # 第三行: 预览标注 (攻击方/受击方) 显示隐藏 + 受击方距离。
+        # 预览标注 (攻击方/受击方) 显示隐藏 + 受击方距离。
         # 距离只影响预览定位 (图层类型 3/4 与飘字锚定受击方), 不写入文件。
-        marker_ctrl = QHBoxLayout()
-        marker_ctrl.setSpacing(4)
-        marker_ctrl.addWidget(QLabel("标注:"))
+        mark_lbl = QLabel("标注:")
         self._show_attacker_cb = QCheckBox("攻击方")
         self._show_attacker_cb.setChecked(True)
         self._show_attacker_cb.setToolTip("显示或隐藏预览区的攻击方原点十字标记")
         self._show_attacker_cb.stateChanged.connect(
             self._on_marker_vis_changed)
-        marker_ctrl.addWidget(self._show_attacker_cb)
         self._show_defender_cb = QCheckBox("受击方")
         self._show_defender_cb.setChecked(True)
         self._show_defender_cb.setToolTip(
             "显示或隐藏预览区的受击方(假想敌)十字与人形标记")
         self._show_defender_cb.stateChanged.connect(
             self._on_marker_vis_changed)
-        marker_ctrl.addWidget(self._show_defender_cb)
+        _group(mark_lbl, self._show_attacker_cb, self._show_defender_cb)
 
-        marker_ctrl.addSpacing(8)
-        marker_ctrl.addWidget(QLabel("受击方距离:"))
+        dist_lbl = QLabel("受击方距离:")
         self._enemy_dist_spin = _NoWheelSpinBox()
         self._enemy_dist_spin.setRange(0, 640)
         self._enemy_dist_spin.setValue(PREVIEW_ENEMY_X)
@@ -976,7 +975,6 @@ class ActEditorV2(EditorMainWindow):
             "可调整此距离模拟实战站位 (默认 160 对应原版预览值)。")
         self._enemy_dist_spin.valueChanged.connect(
             self._on_enemy_dist_changed)
-        marker_ctrl.addWidget(self._enemy_dist_spin)
         dist_slider = QSlider(Qt.Horizontal)
         dist_slider.setRange(0, 640)
         dist_slider.setValue(PREVIEW_ENEMY_X)
@@ -985,10 +983,7 @@ class ActEditorV2(EditorMainWindow):
         dist_slider.setToolTip(self._enemy_dist_spin.toolTip())
         dist_slider.valueChanged.connect(self._on_enemy_dist_changed)
         self._enemy_dist_slider = dist_slider
-        marker_ctrl.addWidget(dist_slider)
-        marker_ctrl.addStretch()
-        ctrl.addLayout(marker_ctrl)
-        inner.layout().addLayout(ctrl)
+        _group(dist_lbl, self._enemy_dist_spin, dist_slider)
 
         # 垂直分割: 预览区 + 时间轴区 (工具栏附在时间轴顶部)
         vpw = QSplitter(Qt.Vertical)
