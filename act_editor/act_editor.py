@@ -345,6 +345,10 @@ FLOAT_TYPE_MAP = {ft['id']: ft for ft in FLOAT_TYPES}
 DEFAULT_FLOAT_TYPE = 'hp_damage'
 DEFAULT_FLOAT_TOTAL = 999
 
+# 预览受击方立绘: 固定取 Aa.jvg 第 0 组第 16 帧 (0 起算)。
+DEFENDER_SPRITE_BLOCK = 0
+DEFENDER_SPRITE_FRAME = 16
+
 
 def _get_jvg_loader():
     """获取 JVG 数据模块 (从 editor_utils.jvg_data 共享模块导入, 避免打包路径问题)"""
@@ -395,7 +399,7 @@ class ActEditorV2(EditorMainWindow):
         "  · 多图层 2D 精灵动画编辑\n"
         "  · 6 种图像混合模式\n"
         "  · 实时动画预览\n"
-        "  · 预览标注: 可隐藏攻击方/受击方标记, 受击方距离可调\n"
+        "  · 预览标注: 可隐藏攻击方/受击方, 受击方为 Aa.jvg 立绘, 距离可调\n"
         "  · 预览敌方受击飘字（按数值出现时间分段，测试总值 999）\n"
         "  · 飘字效果可选：伤害/内力/恢复/Miss/法术反弹/状态等，颜色对齐原版\n"
         "  · 音效触发表编辑\n"
@@ -491,6 +495,8 @@ class ActEditorV2(EditorMainWindow):
         self._preview_vis = {}
         # 受击方(假想敌)与攻击方原点的预览距离, 仅影响预览不写入数据
         self._preview_enemy_x = PREVIEW_ENEMY_X
+        # 受击方预览立绘 (pixmap, x_off, y_off) | None=回退占位方框
+        self._defender_sprite = None
 
         # 时间轴编辑状态
         self._tl_selected_layers = set()
@@ -1557,6 +1563,7 @@ class ActEditorV2(EditorMainWindow):
         self._preview_stop()
         self._aa_data = None
         self._af_data = None
+        self._defender_sprite = None
         self._jvg_cache.clear()
         self._pil_cache.clear()
         self.status_var.setText("加载中…")
@@ -2714,6 +2721,7 @@ class ActEditorV2(EditorMainWindow):
         self._greenscreen_remove = self.greenscreen_cb.isChecked()
         self._jvg_cache.clear()
         self._pil_cache.clear()
+        self._build_defender_sprite()
         self._preview_redraw()
 
     # ── 尾部数据 ──
@@ -2823,7 +2831,33 @@ class ActEditorV2(EditorMainWindow):
                     self._af_counts = r.frame_counts
         except Exception:
             pass
+        self._build_defender_sprite()
         return (self._aa_data is not None) or (self._af_data is not None)
+
+    def _build_defender_sprite(self):
+        """预览受击方立绘: 固定 Aa.jvg 第 0 组第 16 帧 (0 起算)。
+
+        走 _preview_get_pil, 与图层一致地应用去绿幕。立绘在
+        _preview_redraw 中合成到 1/2 类图层之上、3/4/5 类图层之下
+        (对应 sub_4434BC 行主序逐格: 受击方本体先于受击方特效绘制)。
+        无 Aa 数据时保持 None, 画布回退占位方框。
+        """
+        self._defender_sprite = None
+        if not HAS_PIL or self._aa_data is None:
+            return
+        try:
+            blk = self._aa_data.get_block(DEFENDER_SPRITE_BLOCK)
+            if (blk.frame_count <= DEFENDER_SPRITE_FRAME
+                    or DEFENDER_SPRITE_FRAME < 0):
+                return
+            frame = blk.frames[DEFENDER_SPRITE_FRAME]
+            pil = self._preview_get_pil(
+                'aa', DEFENDER_SPRITE_BLOCK, DEFENDER_SPRITE_FRAME)
+        except Exception:
+            return
+        if pil is None:
+            return
+        self._defender_sprite = (pil, frame.x_off, frame.y_off)
 
     def _preview_get_pil(self, src, block_idx, frame_idx):
         key = (src, block_idx, frame_idx)
@@ -2903,6 +2937,14 @@ class ActEditorV2(EditorMainWindow):
                     b = t + f.height - 1
                     xs.extend([l, r])
                     ys.extend([t, b])
+        # 受击方立绘也参与包围盒 (立绘合成在画面图层之间)
+        dst = self._defender_sprite
+        if dst is not None:
+            d_pil, d_off_x, d_off_y = dst
+            dl = self._preview_enemy_x + d_off_x
+            dt = d_off_y
+            xs.extend([dl, dl + d_pil.size[0] - 1])
+            ys.extend([dt, dt + d_pil.size[1] - 1])
         if len(xs) < 2 or len(ys) < 2:
             return None
         return (min(xs) - 10, min(ys) - 10, max(xs) + 10, max(ys) + 10)
@@ -3055,6 +3097,10 @@ class ActEditorV2(EditorMainWindow):
         if self._editing_idx < 0:
             return False
 
+        # 立绘缺失时画布画占位人形; 有立绘时已合成进下方画面图层
+        self.preview_canvas.set_defender_placeholder(
+            self._defender_sprite is None)
+
         direction = self._dir_btns.checkedId()
         if direction < 0:
             direction = 0
@@ -3070,7 +3116,12 @@ class ActEditorV2(EditorMainWindow):
             return False
 
         tick = self._preview_tick_idx
-        sprites = []
+        # 游戏绘制次序 (sub_4434BC 行主序逐格, 四段分流 L305/L414/L460/L518):
+        # 1/2 类图层随攻击方格子绘制 → 受击方本体 → 3/4/5 类图层随受击方
+        # 格子绘制在本体之上。据此把图层拆成受击方之下/之上两组,
+        # 立绘在两组之间合成进画面 (混合才能作用到受击方像素)。
+        sprites_below = []   # 类型 1/2: 人物动作 + 攻击方特效
+        sprites_above = []   # 类型 3/4/5: 受击方特效/位置标记/全屏特效
         dyn_x, dyn_y = [], []
         n_stoppable = 0
         n_stopped = 0
@@ -3131,10 +3182,20 @@ class ActEditorV2(EditorMainWindow):
             spr_b = spr_t + frame.height - 1
             dyn_x.extend([spr_l, spr_r, -ox - enemy_x])
             dyn_y.extend([spr_t, spr_b, -oy])
-            sprites.append((slot, eff_dir, L, src, blk, cur_abs, frame,
-                           ox, oy, spr_l, spr_t, spr_r, spr_b, False))
+            (sprites_below if L[0] < 3 else sprites_above).append(
+                (slot, eff_dir, L, src, blk, cur_abs, frame,
+                 ox, oy, spr_l, spr_t, spr_r, spr_b, False))
 
-        if not sprites:
+        # 受击方立绘 (PIL, 帧偏移): 有数据则参与包围盒与合成
+        defender_img = None
+        defender_l = defender_t = 0
+        dst = self._defender_sprite
+        if dst is not None:
+            defender_img, d_off_x, d_off_y = dst
+            defender_l = self._preview_enemy_x + d_off_x
+            defender_t = d_off_y
+
+        if not sprites_below and not sprites_above:
             self.preview_canvas.set_float_specs([])
             self.preview_canvas.set_frame_data(
                 None, 0, 0, [], (0, 0), (0, 0),
@@ -3146,6 +3207,11 @@ class ActEditorV2(EditorMainWindow):
         if self._preview_bbox is not None:
             bbox_l, bbox_t, bbox_r, bbox_b = self._preview_bbox
         else:
+            if defender_img is not None:
+                dyn_x.extend([defender_l,
+                              defender_l + defender_img.size[0] - 1])
+                dyn_y.extend([defender_t,
+                              defender_t + defender_img.size[1] - 1])
             bbox_l = min(dyn_x)
             bbox_r = max(dyn_x)
             bbox_t = min(dyn_y)
@@ -3182,10 +3248,11 @@ class ActEditorV2(EditorMainWindow):
         comp_ox, comp_oy = to_cv(bbox_l, bbox_t)
 
         sprite_boxes = []
-        slot_colors = SLOT_COLORS
-        info = [f"方向{direction} | 可见{len(sprites)}图层 | Tick:{tick}"]
+        info = [
+            f"方向{direction} | 可见{len(sprites_below) + len(sprites_above)}图层"
+            f" | Tick:{tick}"]
 
-        for sp in sprites:
+        def _paste_sprite(sp):
             (slot, eff_dir, L, src, blk, cur_abs, frame,
              ox, oy, spr_l, spr_t, spr_r, spr_b, stopped) = sp
             pk = L[1]
@@ -3199,11 +3266,11 @@ class ActEditorV2(EditorMainWindow):
 
             pil = self._preview_get_pil(src, pk, cur_abs)
             if pil is None:
-                continue
+                return None
 
             pil_blended = _apply_blend(pil, blend_mode, blend_param)
             if pil_blended is None:
-                continue
+                return None
 
             cx, cy = to_cv(spr_l, spr_t)
             nw = max(1, int(frame.width * scale))
@@ -3226,9 +3293,7 @@ class ActEditorV2(EditorMainWindow):
                     else:
                         composite.paste(final_img, (dx, dy), final_img)
             except Exception:
-                continue
-
-            sprite_boxes.append((slot, eff_dir, cx, cy, cx + nw, cy + nh, ox, oy))
+                return None
 
             info.append(
                 f"  #{slot} src={src} blk={pk} t={L[0]} dir={eff_dir} "
@@ -3238,6 +3303,26 @@ class ActEditorV2(EditorMainWindow):
                 f"int={L[21]} delay={L[22]} "
                 f"[{L[17]}..{L[18]}] loop={L[19]}"
                 f"{' [STOP]' if stopped else ''}")
+            return (slot, eff_dir, cx, cy, cx + nw, cy + nh, ox, oy)
+
+        # 先画 1/2 类 (攻击方动作/特效) — 在游戏中随攻击方格子先绘制
+        for sp in sprites_below:
+            box = _paste_sprite(sp)
+            if box:
+                sprite_boxes.append(box)
+
+        # 受击方本体: 游戏中受击方格子先画本体、后画其上特效
+        # (sub_4434BC L292 → L414/L460), 立绘因此介于两组图层之间
+        if defender_img is not None and composite is not None:
+            dx = int(round((defender_l - bbox_l) * scale))
+            dy = int(round((defender_t - bbox_t) * scale))
+            composite.paste(defender_img, (dx, dy), defender_img)
+
+        # 再画 3/4/5 类 (受击方特效/位置标记/全屏) — 覆盖受击方本体
+        for sp in sprites_above:
+            box = _paste_sprite(sp)
+            if box:
+                sprite_boxes.append(box)
 
         # 转换 composite 为 QPixmap
         comp_pixmap = pil_to_qpixmap(composite) if composite else None

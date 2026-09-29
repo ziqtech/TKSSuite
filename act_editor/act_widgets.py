@@ -60,6 +60,9 @@ class PreviewCanvas(QWidget):
         self._cursor_over_sprite = False
         self._show_attacker = True
         self._show_defender = True
+        # 受击方立绘已由编辑器合成进画面图层之间 (与游戏层次一致),
+        # 画布只在无立绘数据时画占位人形
+        self._defender_placeholder = False
 
     def set_entry_title(self, title):
         self._entry_title = title
@@ -73,6 +76,11 @@ class PreviewCanvas(QWidget):
         """切换攻击方原点与受击方假想敌标注的绘制。"""
         self._show_attacker = show_attacker
         self._show_defender = show_defender
+        self.update()
+
+    def set_defender_placeholder(self, visible):
+        """无受击方立绘数据时绘制占位人形; 有立绘时由合成画面呈现。"""
+        self._defender_placeholder = visible
         self.update()
 
     def set_frame_data(self, composite_pixmap, comp_ox, comp_oy,
@@ -134,12 +142,13 @@ class PreviewCanvas(QWidget):
             painter.drawLine(int(ex_c - 16), int(ey_c), int(ex_c + 16), int(ey_c))
             painter.drawLine(int(ex_c), int(ey_c - 16), int(ex_c), int(ey_c + 16))
             painter.drawText(int(ex_c + 18), int(ey_c + 4), "受击方")
-            # 假想敌人形
-            painter.fillRect(QRect(int(ex_c - 15), int(ey_c - 40), 30, 40), QColor(BLOCK_SHADOW_BG))
-            painter.setPen(QColor(BLOCK_SHADOW_BORDER))
-            painter.drawRect(QRect(int(ex_c - 15), int(ey_c - 40), 30, 40))
-            painter.setPen(QColor('#f44'))
-            painter.drawText(int(ex_c - 4), int(ey_c - 22), "敌")
+            # 立绘缺失时的占位人形 (有立绘时立绘已在画面图层中)
+            if self._defender_placeholder:
+                painter.fillRect(QRect(int(ex_c - 15), int(ey_c - 40), 30, 40), QColor(BLOCK_SHADOW_BG))
+                painter.setPen(QColor(BLOCK_SHADOW_BORDER))
+                painter.drawRect(QRect(int(ex_c - 15), int(ey_c - 40), 30, 40))
+                painter.setPen(QColor('#f44'))
+                painter.drawText(int(ex_c - 4), int(ey_c - 22), "敌")
 
         # 伤害飘字
         if self._float_specs:

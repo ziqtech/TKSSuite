@@ -52,6 +52,8 @@ class FlowLayout(QLayout):
     控制区右缘 (有两行以上时贴第 2 行, 只有一行时贴该行右缘);
     其所在行装箱时会为它预留右侧宽度。
 
+    同一行的子项按行高垂直居中, 标签与高控件共享一条水平中线。
+
     布局声明 hasHeightForWidth, 外层 QVBoxLayout 会按可用宽度
     自动调整本布局的高度 (折行数变化时行数随之增减)。
     """
@@ -162,19 +164,22 @@ class FlowLayout(QLayout):
 
         y = area.y()
         for li, (items, _lw, lh) in enumerate(lines):
+            # 同行子项按行高垂直居中: 标签与高控件 (下拉框/输入框/按钮)
+            # 共享一条水平中线, 否则矮控件顶在行首会显得参差不齐
+            line_h = max(lh, pin_hint.height() if li == pin_line else 0)
             x = area.x()
             for item in items:
                 hint = item.sizeHint()
+                iy = y + max(0, (line_h - hint.height()) // 2)
                 if not test_only:
-                    item.setGeometry(QRect(QPoint(x, y), hint))
+                    item.setGeometry(QRect(QPoint(x, iy), hint))
                 x += hint.width() + spacing
             if li == pin_line:
                 px = area.right() + 1 - pin_hint.width()
-                py = y + max(0, (lh - pin_hint.height()) // 2)
+                py = y + max(0, (line_h - pin_hint.height()) // 2)
                 if not test_only:
                     pin.setGeometry(QRect(QPoint(px, py), pin_hint))
-                lh = max(lh, pin_hint.height())
-            y += lh + spacing
+            y += line_h + spacing
         if lines:
             y -= spacing
         return y - rect.y() + margins.bottom()
