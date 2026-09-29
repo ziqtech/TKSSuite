@@ -224,12 +224,15 @@ def build_indexes(data):
       char_joins:   {warpc_idx: [{'scene','conds','comment'}, ...]}
       battles:      {battle_id: {'name','map_id','enemy_ids'}}
       battle_scenes:{battle_id: set(场景ID)}  (War命令 + type16 战斗区)
+      normal_map_items: [{scene,x,y,enabled,items:[(iid,qmin,qmax)]}]
+                    普通物品地图拾取点 (非特殊 type110 机关确定物品组)
     """
     data.item_sources = defaultdict(list)
     data.char_joins = defaultdict(list)
     data.battles = {}
     data.battle_scenes = defaultdict(set)
     data.special_items = []
+    data.normal_map_items = []
 
     d = data.game_dir
     mat_p = None
@@ -381,6 +384,45 @@ def build_indexes(data):
         special_items,
         key=lambda e: (e['scene'] if e['scene'] is not None else 1 << 30,
                        e['entity_id']))
+
+    # ── 1b. 普通物品地图拾取点 (非特殊物品, 供地图页标注) ──
+    # 仅统计 非特殊 type110 机关 的 d53/d57/d61 确定物品组
+    # (sub_408B30 → sub_40CE30 真正入包; 与 special_items 互斥防双计)。
+    # 随机其一的 id 区间组不是具体物品, 不标注; 脚本 GetItem 是剧情
+    # 发放事件而非地图拾取点, 不标注。
+    special_entities = {e['entity_id'] for e in special_items}
+    spot_map = {}   # (scene, x, y) → {'enabled', 'items': {iid: [qmin, qmax]}}
+
+    def _add_normal_item(ent, iid, qmin, qmax):
+        if iid <= 0 or iid not in data.item_by_id:
+            return
+        scene = ent['scene']
+        if scene is None or scene < 0:
+            return
+        spot = spot_map.setdefault(
+            (scene, ent['x'], ent['y']), {'enabled': True, 'items': {}})
+        spot['enabled'] = spot['enabled'] and bool(ent['flags'] & 1)
+        rng = spot['items'].setdefault(iid, [0, 0])
+        rng[0] += max(qmin, 0)
+        rng[1] += max(qmax, qmin)
+
+    for eid, ent in entities.items():
+        if ent['type'] != 110 or ent['ext'] is None or eid in special_entities:
+            continue
+        ext = ent['ext']
+        for base in (1, 5, 9):   # d53/d57/d61 三组物品
+            id_min, id_max, q_min, q_max = ext[base:base + 4]
+            if id_min <= 0 or id_min != id_max:
+                continue
+            _add_normal_item(ent, id_min, max(q_min, 0), max(q_max, q_min))
+
+    data.normal_map_items = [
+        {'scene': scene, 'x': x, 'y': y,
+         'enabled': spot['enabled'],
+         'items': sorted((iid, q[0], q[1])
+                         for iid, q in spot['items'].items())}
+        for (scene, x, y), spot in spot_map.items()]
+    data.normal_map_items.sort(key=lambda e: (e['scene'], e['x'], e['y']))
 
     # ── 2. TKMat type110 宝箱/机关 三组物品; type16 随机战斗区 ──
     for eid, ent in entities.items():

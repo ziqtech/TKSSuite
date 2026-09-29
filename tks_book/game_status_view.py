@@ -557,6 +557,12 @@ class GameStatusView(QWidget):
         if raw:
             self._txt_queue.append(('r', x, y, raw, color_idx, px, ftype, max_y))
 
+    def _draw_item_name(self, x, y, tid, color_idx):
+        """物品名富文本渲染 (菜单字号 FTYPE2): TKT 名称可含 FCOLOR 颜色宏,
+        与右键说明同源走 draw_rich, 纯文本名不受影响。"""
+        raw = self._expand_macros(self.data.tkt_raw_bytes(tid).split(b'\x1e')[0])
+        self._rich(x, y, raw, color_idx, px=24, ftype=2)
+
     def _expand_macros(self, raw, depth=0):
         """复刻 sub_409C60 宏展开: 0x14 TEXT引用 / 0x15,0x16 变量 / 0x1D NAME 玩家名。
         控制码 0x01/0x02/0x04/0x05 与 0x1E 原样保留 (交给 draw_rich)。"""
@@ -931,7 +937,8 @@ class GameStatusView(QWidget):
             if 0 <= ri < len(self.data.item_recs):
                 nm = tkt_first_line(self.data.tkt, self.data.item_recs[ri]['vals'][2])
                 if nm:
-                    self._text(p, 480, 80 + 35 * i, nm, 16)
+                    self._draw_item_name(480, 80 + 35 * i,
+                                         self.data.item_recs[ri]['vals'][2], 16)
 
         # 技能槽名字 (417F84 L50-55): f[82..87] (空槽判定与 tab_char 一致: >0)
         for i, fi in enumerate(SKILL_SLOT_IDX):
@@ -1074,8 +1081,8 @@ class GameStatusView(QWidget):
             if selected:
                 self._blit(p, self._mu_pix(81), 281, 31 * r + 103, 15)
             self._blit(p, self._mu_pix(vals[4] + 130), 235, 31 * r + 105)
-            nm = tkt_first_line(self.data.tkt, vals[2]) or f"#{ridx}"
-            self._text(p, 285, 31 * r + 105, nm, 2 if selected else 16)
+            self._draw_item_name(285, 31 * r + 105, vals[2],
+                                 2 if selected else 16)
 
         # 翻页箭头 (417F0C @ 598,48): 帧21 上 / 帧22 下 (+20,+5)
         if self._item_scroll > 0:
@@ -1153,7 +1160,8 @@ class GameStatusView(QWidget):
             if 0 <= ri < len(self.data.item_recs):
                 nm = tkt_first_line(self.data.tkt, self.data.item_recs[ri]['vals'][2])
                 if nm:
-                    self._text(p, 512, 39 * v6 + 60, nm, 16)
+                    self._draw_item_name(512, 39 * v6 + 60,
+                                         self.data.item_recs[ri]['vals'][2], 16)
         # 分类高亮 (419B54 L49): 帧 v8+29 @ (61*v8+230, 52)
         self._blit(p, self._mu_pix(v8 + 29), 61 * v8 + 230, 52)
 
@@ -1170,8 +1178,8 @@ class GameStatusView(QWidget):
             if selected:
                 self._blit(p, self._mu_pix(82), 261, 31 * r + 83, 15)
             self._blit(p, self._mu_pix(vals[4] + 130), 225, 31 * r + 85)
-            nm = tkt_first_line(self.data.tkt, vals[2]) or f"#{ridx}"
-            self._text(p, 265, 31 * r + 85, nm, 2 if selected else 16)
+            self._draw_item_name(265, 31 * r + 85, vals[2],
+                                 2 if selected else 16)
 
         # 翻页箭头 (417F0C @ 426,42): 帧21 上 / 帧22 下 (+20,+5)
         if self._equip_scroll > 0:

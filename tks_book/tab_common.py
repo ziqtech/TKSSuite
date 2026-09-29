@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """tks_book 标签页公共组件 — 左侧搜索表格 + 右侧详情滚动区 (Dock 风格)"""
 from PySide6.QtCore import Qt, QSize
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QTableWidgetItem, QAbstractItemView,
@@ -103,7 +104,8 @@ class BookTabBase(QWidget):
 
         headers:    [str, ...] 列标题
         rows:       [(key, [cell, ...]), ...] 每行单元格;
-                    cell 为 str (纯文本) 或 (text, icon_or_None) (带图标)
+                    cell 为 str (纯文本)、(text, icon_or_None) (带图标)
+                    或 (text, icon_or_None, color_str_or_None) (带图标+前景色)
         widths:     可选 {col: pixel_width} 非拉伸列像素宽
         stretch_col: 可选列索引, 该列初始占用剩余空间，之后仍可独立拖动;
                      未指定时由末列撑满 (StretchLastSection)
@@ -116,10 +118,12 @@ class BookTabBase(QWidget):
 
     @staticmethod
     def _normalize_cell(cell):
-        """单元格归一化: str → (str, None); (text, icon) 原样"""
+        """单元格归一化: str → (str, None, None); (text, icon[, color]) 原样"""
         if isinstance(cell, tuple):
-            return cell[0], cell[1]
-        return cell, None
+            if len(cell) >= 3:
+                return cell[0], cell[1], cell[2]
+            return cell[0], cell[1], None
+        return cell, None, None
 
     def _apply_filter(self):
         q = self.search_input.text()
@@ -136,7 +140,7 @@ class BookTabBase(QWidget):
                 continue
             row = tw.rowCount()
             tw.insertRow(row)
-            for col, (text, icon) in enumerate(norms):
+            for col, (text, icon, color) in enumerate(norms):
                 item = QTableWidgetItem(str(text) if text is not None else "")
                 item.setData(Qt.UserRole, key)
                 if icon is not None:
@@ -145,6 +149,8 @@ class BookTabBase(QWidget):
                 elif text and str(text).strip().lstrip("-").isdigit():
                     # 纯数字列右对齐 (# / ID 等)
                     item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                if color:
+                    item.setForeground(QColor(color))
                 tw.setItem(row, col, item)
         # 列宽 / 拉伸模式交给 AdaptiveTableWidget 统一处理:
         # 非拉伸列以 widths 为下限、按内容自适应; 拉伸列在剩余空间内受控增长。

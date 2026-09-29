@@ -6,6 +6,8 @@
   各地图:    特殊物品来源位置 (Attribute(-1,11,N) 关联实体, 坐标 TKMat d10/d11)
              文王卦籤=红色 ● / 晶礦=蓝色 ● / 機關圖=绿色 ●, 带数量;
              未启用来源 (d2 bit0=0) 画虚线空心圆。
+             普通物品拾取位置 (非特殊 type110 机关的确定物品组, 灰色 ●),
+             带数量; 未启用画虚线空心圆。
 """
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import (QPainter, QColor, QPen, QBrush, QFont, QPixmap,
@@ -23,6 +25,7 @@ _KNOWN_ITEM_COLORS = {'文王卦籤': '#e53935',   # 红
                       '機關圖':   '#43a047'}   # 绿
 _PALETTE = ['#e53935', '#1e88e5', '#43a047', '#fb8c00', '#8e24aa', '#00acc1']
 _TRIGGER_COLOR = '#ffd54f'   # type 15 事件触发区 (黄)
+_NORMAL_COLOR = '#9e9e9e'    # 普通物品拾取点 (灰, 与特殊物品彩色区分)
 
 
 class MapTab(BookTabBase):
@@ -57,8 +60,8 @@ class MapTab(BookTabBase):
         self._pix_cache.clear()
         self._overlay_cache.clear()
         self._build_item_colors()
-        self.set_table_items(["#", "场景", "特殊物品"], [],
-                             widths={0: 50, 2: 80}, stretch_col=1)
+        self.set_table_items(["#", "场景", "特殊物品", "普通物品"], [],
+                             widths={0: 50, 2: 80, 3: 80}, stretch_col=1)
         self._preview_lbl.setText("请从左侧选择地图")
         self._preview_lbl.adjustSize()
         self._legend_lbl.setText("")
@@ -97,6 +100,12 @@ class MapTab(BookTabBase):
             for e in getattr(self.data, 'special_items', None) or []:
                 if e.get('enabled', True):
                     spec_tot[e['scene']] = spec_tot.get(e['scene'], 0) + e['delta']
+            # 场景 → 普通物品有效总数 (启用拾取点数量上限合计)
+            norm_tot = {}
+            for sp in getattr(self.data, 'normal_map_items', None) or []:
+                if sp['enabled']:
+                    norm_tot[sp['scene']] = norm_tot.get(sp['scene'], 0) + sum(
+                        qmax for _iid, _qmin, qmax in sp['items'])
             rows = []
             if grp is not None:
                 for sec in grp.sections:
@@ -104,7 +113,8 @@ class MapTab(BookTabBase):
                         continue
                     sid = sec.index
                     rows.append((sid, [str(sid), self.data.scene_name(sid),
-                                       str(spec_tot.get(sid, 0))]))
+                                       str(spec_tot.get(sid, 0)),
+                                       str(norm_tot.get(sid, 0))]))
             return rows, loaded_dir
 
         self._grp_worker = run_background(
@@ -118,8 +128,8 @@ class MapTab(BookTabBase):
             self._populated = False
             QTimer.singleShot(0, self.ensure_populated)
             return
-        self.set_table_items(["#", "场景", "特殊物品"], rows,
-                             widths={0: 50, 2: 80}, stretch_col=1)
+        self.set_table_items(["#", "场景", "特殊物品", "普通物品"], rows,
+                             widths={0: 50, 2: 80, 3: 80}, stretch_col=1)
         if rows:
             self._preview_lbl.setText("请从左侧选择地图")
         else:
@@ -216,8 +226,13 @@ class MapTab(BookTabBase):
                      if en['scene'] == sid and en['type'] == 15]
         return spots, trigs
 
+    def _normal_marks(self, sid):
+        """场景 sid 的普通物品拾取点: [{x, y, enabled, items:[(iid,qmin,qmax)]}]"""
+        return [sp for sp in getattr(self.data, 'normal_map_items', None) or []
+                if sp['scene'] == sid]
+
     def _compose(self, sid, base):
-        """在背景 QPixmap 上叠加特殊物品/type15 标注, 返回新 QPixmap
+        """在背景 QPixmap 上叠加特殊物品/普通物品/type15 标注, 返回新 QPixmap
 
         数量文字钳制在地图范围内 (不出界); type15 按碰撞盒
         d18/d19 左上角 + d20/d21 宽高 画实际有效范围矩形
@@ -226,7 +241,8 @@ class MapTab(BookTabBase):
         if not self._item_colors:
             self._build_item_colors()
         spots, trigs = self._scene_marks(sid)
-        if not spots and not trigs:
+        normal = self._normal_marks(sid)
+        if not spots and not trigs and not normal:
             return base
         pix = QPixmap(base)
         W, H = pix.width(), pix.height()
@@ -268,6 +284,36 @@ class MapTab(BookTabBase):
             p.setPen(QColor(255, 255, 255))
             p.drawText(tx, ty, txt)
 
+        # 普通物品拾取点: 灰色小圆 + 数量合计 (未启用虚线空心)
+        for sp in normal:
+            x, y = sp['x'], sp['y']
+            if sp['enabled']:
+                p.setPen(QPen(QColor(255, 255, 255), 2))
+                p.setBrush(QBrush(QColor(_NORMAL_COLOR)))
+            else:
+                pen = QPen(QColor(_NORMAL_COLOR), 2)
+                pen.setStyle(Qt.DashLine)
+                p.setPen(pen)
+                p.setBrush(Qt.NoBrush)
+            p.drawEllipse(x - 6, y - 6, 12, 12)
+            total = sum(qmax for _iid, _qmin, qmax in sp['items'])
+            txt = f"×{total}"
+            tw_px = fm.horizontalAdvance(txt)
+            tx = x + 8
+            if tx + tw_px > W:
+                tx = x - 8 - tw_px
+                if tx < 0:
+                    tx = 0
+            ty = y - 6
+            if ty - fm.ascent() < 0:
+                ty = y + 6 + fm.ascent()
+            if ty + fm.descent() > H:
+                ty = H - fm.descent()
+            p.setPen(QColor(0, 0, 0))
+            p.drawText(tx + 1, ty + 1, txt)
+            p.setPen(QColor(255, 255, 255))
+            p.drawText(tx, ty, txt)
+
         # type 15 事件触发区 (仅 #0 大地图): 碰撞盒矩形 = 实际有效范围
         for en in trigs:
             bx, by, bw, bh = en.get('box', (0, 0, 0, 0))
@@ -292,11 +338,12 @@ class MapTab(BookTabBase):
         return pix
 
     def _legend_html(self, sid):
-        """图例: 本场景各特殊物品总量 + 触发区数量 (无标注返回空串)"""
+        """图例: 本场景各特殊/普通物品总量 + 触发区数量 (无标注返回空串)"""
         if not self._item_colors:
             self._build_item_colors()
         spots, trigs = self._scene_marks(sid)
-        if not spots and not trigs:
+        normal = self._normal_marks(sid)
+        if not spots and not trigs and not normal:
             return ""
         totals = {}      # iid → [总数, 含未启用?]
         for (iid, _x, _y), s in spots.items():
@@ -309,6 +356,23 @@ class MapTab(BookTabBase):
             c = self._item_colors.get(iid, _PALETTE[0])
             t = (f"<span style='color:{c}; font-size:14px;'>●</span> "
                  f"{name} ×{total}")
+            if has_dis:
+                t += " <span style='color:#999;'>(虚线=未启用)</span>"
+            parts.append(t)
+        # 普通物品: 按物品聚合数量区间 (同点多次拾取累加)
+        norm_totals = {}   # iid → [Σqmin, Σqmax, 含未启用?]
+        for sp in normal:
+            for iid, qmin, qmax in sp['items']:
+                t = norm_totals.setdefault(iid, [0, 0, False])
+                t[0] += qmin
+                t[1] += qmax
+                t[2] = t[2] or not sp['enabled']
+        for iid in sorted(norm_totals):
+            qmin, qmax, has_dis = norm_totals[iid]
+            name = self.data.item_name_by_id(iid) or f"物品#{iid}"
+            qty = f"×{qmin}~{qmax}" if qmax > qmin else f"×{qmin}"
+            t = (f"<span style='color:{_NORMAL_COLOR}; font-size:14px;'>●</span> "
+                 f"{name} {qty}")
             if has_dis:
                 t += " <span style='color:#999;'>(虚线=未启用)</span>"
             parts.append(t)

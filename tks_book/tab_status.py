@@ -48,6 +48,12 @@ from tab_common import BookTabBase
 class StatusTab(BookTabBase):
     """状态查看页: 31 种异常状态图标/名称/功能/来源"""
 
+    # 移出列表的伪状态 (位索引保留, 其余 UI 按位取名不受影响):
+    # 文档《状态系统逆向分析与效果说明》#16(0 起索引 15) 标注"待验证 —
+    # byte_9E049D 在 decompile 中无直接引用", 与 #15(连计, 施法MP减半
+    # sub_4389B0 已验证) 重名易误导, 列表不再展示。
+    HIDDEN_STATUS_IDX = {15}
+
     def __init__(self, data, parent=None):
         super().__init__(data, parent, placeholder="搜索状态名称或类型")
         self._icon_cache = {}
@@ -56,6 +62,8 @@ class StatusTab(BookTabBase):
         self._icon_cache.clear()
         rows = []
         for idx, name in enumerate(STATUS_NAMES):
+            if idx in self.HIDDEN_STATUS_IDX:
+                continue
             icon = None
             pix = get_sprite_pixmap(self.data.mu_sprites,
                                     STATUS_ICON_BASE + idx - 130, (24, 24),

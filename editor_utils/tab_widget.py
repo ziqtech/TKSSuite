@@ -14,7 +14,8 @@ from __future__ import annotations
 
 from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
-from PySide6.QtWidgets import QApplication, QTabBar, QTabWidget, QWidget
+from PySide6.QtWidgets import (QApplication, QTabBar, QTabWidget, QToolButton,
+                               QWidget)
 
 from editor_utils import theme_tokens
 
@@ -24,11 +25,28 @@ class EditorTabBar(QTabBar):
 
     ``extend_to_host`` 用于连续内容面板：让底边线覆盖整个内容区，
     而不是只覆盖已有标签的宽度。
+    左右滚动按钮 (标签溢出时的 ◀/▶) 钉成正方形: 默认按字体度量
+    得到的宽高比例失衡。
     """
+
+    SCROLLER_SIDE = 20
 
     def __init__(self, parent: QWidget | None = None, *, extend_to_host=False):
         super().__init__(parent)
         self._extend_to_host = bool(extend_to_host)
+        self._sync_scroller_buttons()
+
+    def _sync_scroller_buttons(self):
+        for btn in self.findChildren(QToolButton):
+            btn.setFixedSize(self.SCROLLER_SIDE, self.SCROLLER_SIDE)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._sync_scroller_buttons()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._sync_scroller_buttons()
 
     def sizeHint(self):
         hint = super().sizeHint()

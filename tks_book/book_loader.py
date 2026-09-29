@@ -4,7 +4,7 @@
 解析逻辑与各编辑器保持一致 (LZSS 解压 + 未压缩兜底 + int16 小端解包):
   TKT.dat     → editor_utils.tkt_loader.load_tkt_simple (Big5, XOR 0xFF)
   WarPC.dat   → warpc_editor.load_warpc 同款 (1054B/条 = 527 int16)
-  TKSkill.dat → skill_editor.load_skills 同款 (94B/条 × 350)
+  TKSkill.dat → skill_editor.load_skills 同款 (94B/条, 按实际记录数)
   TKItem.dat  → item_editor.load_items 同款 (64B/条, 按实际记录数)
   Fa.JVG / Mu.JVG → editor_utils.jvg_loader.load_mu_sprites (@JVG 通用)
   SC.GRP + SC.IDX → editor_utils.grp_data (地图背景, 仅 Frame A)
@@ -25,6 +25,7 @@ from editor_utils.game_defs import STATUS_NAMES
 
 WARPC_REC = 1054
 WARPC_FIELD_COUNT = 527
+WARPC_LEGACY_SKILL_MAX = 251  # [273+i] 指令技能槽仅映射常规技能 0..251 (同 kon_name_resolver)
 SKILL_LEARN_BASE = 88      # [88]-[259] 344技能×1byte 学习状态
 SKILL_LEARN_COUNT = 344
 HISTORY_TKT_BASE = 9050    # 历史文本 TKT ID = 9050 + 角色序号
@@ -32,7 +33,8 @@ HISTORY_FIELD_IDX = 262    # 补丁字段 [262] 非零时覆盖历史文本ID
 SCENE_NAME_TKT_BASE = 300  # 场景名 TKT ID = 300 + 场景ID
 
 SKILL_REC = 94
-SKILL_CNT = 350
+SKILL_CNT = 350            # 原版条数 (仅作参考; load_skills 按实际记录数加载,
+                           # tkskill_expand 后可到 697, 见 skill_editor)
 ITEM_REC = 64
 ITEM_CNT = 600            # 原版记录数 (仅作参考; load_items 按实际记录数加载)
 
@@ -166,12 +168,15 @@ def load_warpc(fp):
 
 
 def load_skills(fp):
-    """TKSkill.dat → [{'index', 'vals': (47×int16)}, ...]"""
+    """TKSkill.dat → [{'index', 'vals': (47×int16)}, ...]
+
+    条数按解压后大小动态推导 (tkitem/tkskill_expand 后可超过原版 350,
+    与 skill_editor.load_skills 同款)"""
     with open(fp, 'rb') as f:
         raw = f.read()
     dec = _decompress_with_fallback(raw, SKILL_REC)
     recs = []
-    for i in range(SKILL_CNT):
+    for i in range(len(dec) // SKILL_REC):
         off = i * SKILL_REC
         if off + SKILL_REC > len(dec):
             break
@@ -275,6 +280,8 @@ class GameData:
         self.enemy_battles = {}  # warpc_idx → [battle_id]
         self.special_items = []  # Attribute(-1,11,N) 特殊物品收集度来源列表
         self.mat_entities = {}   # TKMat 轻量实体表 {实体ID: type/scene/flags/x/y/ext}
+        self.normal_map_items = []  # 普通物品地图拾取点 (非特殊 type110 机关确定物品)
+        self.skill_ext = None    # WarPC.dat.tksx 扩展技能旁车 (350+ 学习状态矩阵)
         # 存档索引 (sub_41B1A8 扫描 save\1.sav ~ save\9.sav)
         # save_slots[i] = {'team_ids','gold','timestamp','team_levels','scene_id'} 或 None (空槽)
         self.save_slots = []
@@ -295,6 +302,7 @@ class GameData:
         self.tkkon_names = {}
         self.skill_types = {}
         self.cmd_skill_slots = {}
+        self.skill_ext = None
 
         def _p(name):
             fp = os.path.join(game_dir, name)
@@ -318,9 +326,13 @@ class GameData:
             if nm:
                 self.skill_names[rec['index']] = nm
             self.skill_types[rec['index']] = rec['vals'][2]
-        # 构建指令技能槽位映射: type==0 的技能按索引升序 → slot i
+        # 构建指令技能槽位映射: 仅常规技能 (type==0 且 index<=251) 按索引
+        # 升序 → slot i。扩展技能 (350+) 不占 [273+i] 槽位
+        # (对齐 kon_name_resolver.WARPC_LEGACY_SKILL_MAX, 否则 MOD 扩展出
+        # type==0 扩展技能时槽位错位)
         active_indices = sorted(
-            i for i, t in self.skill_types.items() if t == 0
+            i for i, t in self.skill_types.items()
+            if t == 0 and i <= WARPC_LEGACY_SKILL_MAX
         )
         self.cmd_skill_slots = {si: i for i, si in enumerate(active_indices)}
 
@@ -336,6 +348,18 @@ class GameData:
                 self.tkkon_names = resolver.get_all_names(compact_threshold=3)
             except Exception:
                 self.tkkon_names = {}
+
+        # 扩展技能旁车 WarPC.dat.tksx (350..696 的学习状态矩阵):
+        # WarPC 打包字节的学习区只有 344 技能, 扩展部分在旁车文件
+        if _p("WarPC.dat"):
+            tksx_p = self.paths["WarPC.dat"] + ".tksx"
+            if os.path.exists(tksx_p):
+                try:
+                    from editor_utils.skill_extension import parse_skill_extension
+                    with open(tksx_p, 'rb') as f:
+                        self.skill_ext = parse_skill_extension(f.read())
+                except Exception:
+                    self.skill_ext = None
 
         ip = _p("TKItem.dat")
         self.item_recs = load_items(ip) if ip else []
@@ -392,6 +416,7 @@ class GameData:
             self.enemy_battles = {}
             self.special_items = []
             self.mat_entities = {}
+            self.normal_map_items = []
 
     # ── 地图 ──
 

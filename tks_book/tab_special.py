@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 
 from editor_utils.jvg_loader import get_sprite_pixmap
 from editor_utils.adaptive_table import AdaptiveTableWidget
+from editor_utils.tkt_display import item_name_color_text
 
 from book_loader import tkt_first_line
 from tab_item import ItemTab, render_item_header
@@ -65,6 +66,7 @@ class SpecialItemTab(ItemTab):
             rec = self.data.item_by_id.get(iid)
             if rec is not None:
                 name = tkt_first_line(self.data.tkt, rec['vals'][2]) or f"物品#{iid}"
+                name, name_color = item_name_color_text(name)  # 宏颜色 → 名称着色
                 icon = None
                 pix = get_sprite_pixmap(self.data.mu_sprites, rec['vals'][4],
                                         (24, 24), self._icon_cache)
@@ -72,7 +74,8 @@ class SpecialItemTab(ItemTab):
                     icon = QIcon(pix)
             else:
                 name, icon = f"物品#{iid}", None
-            rows.append((iid, [(name, icon), f"{g['active']:+d}"]))
+                name_color = None
+            rows.append((iid, [(name, icon, name_color), f"{g['active']:+d}"]))
         self.set_table_items(["物品名称", "数量"], rows,
                              widths={1: 60}, stretch_col=0)
         self.clear_detail()
@@ -103,6 +106,7 @@ class SpecialItemTab(ItemTab):
         rec = self.data.item_by_id.get(key)
         name = (tkt_first_line(self.data.tkt, rec['vals'][2]) if rec else "") \
             or f"物品#{key}"
+        name = item_name_color_text(name)[0]  # 剥离颜色宏
 
         # ── 物品概览 (置顶: 图标/名称/元信息/说明) ──
         if rec is not None:

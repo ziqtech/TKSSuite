@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
 from editor_utils.jvg_loader import get_sprite_pixmap
 from editor_utils.flow_layout import FlowLayout
 from editor_utils.picker_dialogs import STATUS_NAMES, STATUS_ICON_BASE
+from editor_utils.tkt_display import color_tags_html
 from editor_utils.ui_helpers import themed_messagebox, EditorComboBox
 
 from book_loader import (
@@ -90,6 +91,9 @@ class SkillTab(BookTabBase):
         name_row = QHBoxLayout()
         name_row.setSpacing(8)
         name_lbl = QLabel(name)
+        name_html = color_tags_html(name)
+        if name_html is not None:
+            name_lbl.setText(name_html)
         name_lbl.setProperty("class", "PreviewName")
         name_row.addWidget(name_lbl, 1, Qt.AlignVCenter)
         btn_tree = QPushButton("技能树")
@@ -112,9 +116,10 @@ class SkillTab(BookTabBase):
             name_box.addWidget(hint_lbl)
         hv.addLayout(name_box)
         # 说明文本 (放在 PreviewFrame 内部, PreviewDesc 样式, 去除原数据换行)
+        # 颜色宏 (<FCOLOR,n>/0x02 控制码) 经 tkt_display 转为 HTML 着色
         desc = tkt_full_text(self.data.tkt, vals[1])
         if desc:
-            desc_lbl = QLabel(" ".join(desc.split()))
+            desc_lbl = QLabel(color_tags_html(desc) or " ".join(desc.split()))
             desc_lbl.setProperty("class", "PreviewDesc")
             desc_lbl.setWordWrap(True)
             desc_lbl.setAlignment(Qt.AlignLeft | Qt.AlignTop)
@@ -211,10 +216,11 @@ class SkillTab(BookTabBase):
                 self.add_text_block(body, "(无物品关联此技能)", "StatusHint")
 
         # ── 可学习角色: 反向索引所有 warpc_recs 中学习状态 > 0 的角色 ──
+        # 常规技能 (<344) 读 WarPC 打包字节; 扩展技能 (350+) 读
+        # WarPC.dat.tksx 学习状态矩阵 (SKILL_LEARN_LABELS 同一套状态值)
         body = self.add_group("可学习角色")
         learners = []
-        limit = min(SKILL_LEARN_COUNT, len(self.data.skill_recs) or SKILL_LEARN_COUNT)
-        if idx < limit:
+        if idx < SKILL_LEARN_COUNT:
             for wrec in self.data.warpc_recs:
                 wname = self.data.char_name(wrec)
                 if not wname:
@@ -223,10 +229,25 @@ class SkillTab(BookTabBase):
                 state = get_packed_byte(wf, SKILL_LEARN_BASE, idx)
                 if state > 0:
                     learners.append(wname)
+        else:
+            ext = self.data.skill_ext
+            if (ext is not None
+                    and ext.skill_base <= idx < ext.skill_base + ext.skill_count):
+                for wrec in self.data.warpc_recs:
+                    if wrec['index'] >= ext.actor_count:
+                        continue
+                    wname = self.data.char_name(wrec)
+                    if not wname:
+                        continue
+                    if ext.learn_state(wrec['index'], idx) > 0:
+                        learners.append(wname)
         if learners:
             self.add_text_block(body, "、".join(learners))
         else:
-            self.add_text_block(body, "(无角色配置学习此技能)", "StatusHint")
+            hint = "(无角色配置学习此技能)"
+            if idx >= SKILL_LEARN_COUNT and self.data.skill_ext is None:
+                hint += " (未找到 WarPC.dat.tksx 扩展旁车)"
+            self.add_text_block(body, hint, "StatusHint")
 
         self.detail_layout.addStretch(1)
 

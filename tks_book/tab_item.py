@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
 from editor_utils.jvg_loader import get_sprite_pixmap
 from editor_utils.flow_layout import FlowLayout
 from editor_utils.picker_dialogs import STATUS_NAMES, STATUS_ICON_BASE
+from editor_utils.tkt_display import color_tags_html, item_name_color_text
 from editor_utils.ui_helpers import EditorComboBox
 
 from book_loader import (
@@ -57,6 +58,8 @@ class ItemTab(BookTabBase):
             name = tkt_first_line(self.data.tkt, vals[2])
             if not name:
                 continue
+            # 宏颜色代码 → 列表名称着色 (取首段颜色, 文本剥宏)
+            name, name_color = item_name_color_text(name)
             page = vals[1]
             icon = None
             pix = get_sprite_pixmap(self.data.mu_sprites, vals[4], (24, 24),
@@ -65,7 +68,7 @@ class ItemTab(BookTabBase):
                 icon = QIcon(pix)
             self._all_rows.append((rec['index'], [
                 ("", icon), str(rec['index']), str(vals[0]),
-                PAGE_NAMES.get(page, "?"), name,
+                PAGE_NAMES.get(page, "?"), (name, None, name_color),
                 use_right_label(vals[5], page), str(vals[31]),
             ], page))
         self._on_filter_changed()
@@ -239,6 +242,9 @@ def render_item_header(view, rec):
     name_box.setSpacing(4)
     name = tkt_first_line(view.data.tkt, vals[2]) or f"物品#{vals[0]}"
     name_lbl = QLabel(name)
+    name_html = color_tags_html(name)
+    if name_html is not None:
+        name_lbl.setText(name_html)
     name_lbl.setProperty("class", "PreviewName")
     name_box.addWidget(name_lbl, 0, Qt.AlignVCenter)
     # 元信息行: 页面 | 权限 | 价格 | TKKon
@@ -262,9 +268,10 @@ def render_item_header(view, rec):
     top_row.addLayout(name_box, 1)
     hv.addLayout(top_row)
     # 说明文本 (放在 PreviewFrame 内部, PreviewDesc 样式, 去除原数据换行)
+    # 颜色宏 (<FCOLOR,n>/0x02 控制码) 经 tkt_display 转为 HTML 着色
     desc = tkt_full_text(view.data.tkt, vals[3])
     if desc:
-        desc_lbl = QLabel(" ".join(desc.split()))
+        desc_lbl = QLabel(color_tags_html(desc) or " ".join(desc.split()))
         desc_lbl.setProperty("class", "PreviewDesc")
         desc_lbl.setWordWrap(True)
         desc_lbl.setAlignment(Qt.AlignLeft | Qt.AlignTop)

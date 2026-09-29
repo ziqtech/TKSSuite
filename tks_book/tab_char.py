@@ -21,6 +21,7 @@ from editor_utils.jvg_loader import get_sprite_pixmap
 from editor_utils.flow_layout import FlowLayout
 from editor_utils.picker_dialogs import STATUS_NAMES, STATUS_ICON_BASE, GrowthTableDialog
 from editor_utils.adaptive_table import AdaptiveTableWidget
+from editor_utils.tkt_display import color_tags_html
 from book_skill_graph import CharSkillGraph
 from tab_common import BookTabBase
 
@@ -189,7 +190,9 @@ class CharTab(BookTabBase):
         # 人物说明 (去除原数据换行, 单行流式)
         history = self.data.char_history(rec)
         if history:
-            hist_lbl = QLabel(" ".join(history.split()))
+            # 颜色宏 (<FCOLOR,n>/0x02 控制码) 经 tkt_display 转为 HTML 着色
+            hist_lbl = QLabel(color_tags_html(history)
+                              or " ".join(history.split()))
             hist_lbl.setProperty("class", "PreviewDesc")
             hist_lbl.setWordWrap(True)
             hist_lbl.setAlignment(Qt.AlignLeft | Qt.AlignTop)
@@ -282,8 +285,8 @@ class CharTab(BookTabBase):
         body = self.add_group("状态抵抗")
         self._build_status_resist(body, rec)
 
-        # 可学习技能
-        states_all = self._learn_states(f)
+        # 可学习技能 (含 tksx 附加技能; 角色确实没有时才显示空提示)
+        states_all = self._learn_states(f, rec['index'])
         body = self.add_group("可学习技能", stretch=1)
         if states_all:
             states = self._filter_by_state(states_all)
@@ -694,14 +697,26 @@ class CharTab(BookTabBase):
             return "已学习"
         return f"进度{v}"
 
-    def _learn_states(self, fields):
-        """角色可学习技能状态 {skill_idx: state(>0)} (不会的=0 不含在内)"""
+    def _learn_states(self, fields, warpc_idx=None):
+        """角色可学习技能状态 {skill_idx: state(>0)} (不会的=0 不含在内)
+
+        常规技能 (<344) 读 WarPC 打包字节; 附加技能 (350.., warpc_editor
+        命名同义) 读 WarPC.dat.tksx 学习状态矩阵, 无旁车时自然缺省。
+        """
         states = {}
         limit = min(SKILL_LEARN_COUNT, len(self.data.skill_recs) or SKILL_LEARN_COUNT)
         for si in range(limit):
             v = get_packed_byte(fields, SKILL_LEARN_BASE, si)
             if v > 0:
                 states[si] = v
+        ext = self.data.skill_ext
+        if (warpc_idx is not None and ext is not None
+                and 0 <= warpc_idx < ext.actor_count):
+            for si in range(ext.skill_base,
+                            ext.skill_base + ext.skill_count):
+                v = ext.learn_state(warpc_idx, si)
+                if v > 0:
+                    states[si] = v
         return states
 
     def _build_learn_list(self, states):

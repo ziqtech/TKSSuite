@@ -82,8 +82,8 @@ from editor_utils.ui_helpers import (
     make_fake_input, update_path_labels, EditorComboBox, set_themed_icon,
     backup_existing_file,
     show_field_ref,
-    FlowLayout,
 )
+from editor_utils.flow_layout import FlowLayout
 from editor_utils.tab_widget import EditorTabWidget
 from editor_utils.adaptive_table import AdaptiveTableWidget
 from editor_utils.mod_exporter import (

@@ -4,10 +4,10 @@
 """
 import os
 import sys
-from PySide6.QtCore import QObject, QEvent, Qt, QTimer, QPoint, QRect, QSize
+from PySide6.QtCore import QObject, QEvent, Qt, QTimer
 from PySide6.QtGui import QIcon, QFont, QImage, QPixmap
 from PySide6.QtWidgets import (QApplication, QDialog, QFileDialog, QFrame,
-                               QHBoxLayout, QLabel, QLayout,
+                               QHBoxLayout, QLabel,
                                QLineEdit, QMessageBox,
                                QPushButton, QTextEdit, QVBoxLayout, QWidget, QSpinBox)
 from editor_utils.combo_box import EditorComboBox
@@ -38,151 +38,6 @@ class NoWheelSpinBox(QSpinBox):
     def wheelEvent(self, event):
         event.ignore()
 
-
-class FlowLayout(QLayout):
-    """自适应换行的流式布局 (Qt 官方 FlowLayout 示例的 PySide6 移植)。
-
-    子项从左到右排列, 剩余宽度不足以容纳下一项时整项折到下一行 —
-    适合工具条控件: 窄窗口自然折多行, 窗口拉宽/最大化时自动减少
-    换行去利用空白。想保证"标签和它的控件不被折散"时, 先把它们
-    包进一个 QWidget (内部 QHBoxLayout) 再加入本布局, 折行便只
-    发生在逻辑组之间。
-
-    可选"右侧固定项" (set_right_pinned): 不参与流式换行, 始终贴在
-    控制区右缘 (有两行以上时贴第 2 行, 只有一行时贴该行右缘);
-    其所在行装箱时会为它预留右侧宽度。
-
-    同一行的子项按行高垂直居中, 标签与高控件共享一条水平中线。
-
-    布局声明 hasHeightForWidth, 外层 QVBoxLayout 会按可用宽度
-    自动调整本布局的高度 (折行数变化时行数随之增减)。
-    """
-
-    def __init__(self, parent=None, spacing=4):
-        super().__init__(parent)
-        self.setSpacing(spacing)
-        self._items = []
-        self._pin = None
-
-    def __del__(self):
-        while self._items:
-            self.takeAt(0)
-
-    def addItem(self, item):
-        self._items.append(item)
-
-    def count(self):
-        return len(self._items)
-
-    def itemAt(self, index):
-        if 0 <= index < len(self._items):
-            return self._items[index]
-        return None
-
-    def takeAt(self, index):
-        if 0 <= index < len(self._items):
-            return self._items.pop(index)
-        return None
-
-    def set_right_pinned(self, widget):
-        """设置右侧固定项 (传 None 清除)。该项的父窗口须与本布局相同。"""
-        self._pin = widget
-        self.update()
-        self.invalidate()
-
-    def expandingDirections(self):
-        return Qt.Orientations(Qt.Orientation(0))
-
-    def hasHeightForWidth(self):
-        return True
-
-    def heightForWidth(self, width):
-        return self._do_layout(QRect(0, 0, width, 0), True)
-
-    def setGeometry(self, rect):
-        super().setGeometry(rect)
-        self._do_layout(rect, False)
-
-    def sizeHint(self):
-        return self.minimumSize()
-
-    def minimumSize(self):
-        size = QSize()
-        for item in self._items:
-            size = size.expandedTo(item.minimumSize())
-        if self._pin is not None:
-            size = size.expandedTo(self._pin.minimumSize())
-        margins = self.contentsMargins()
-        size += QSize(margins.left() + margins.right(),
-                      margins.top() + margins.bottom())
-        return size
-
-    def _pin_size(self):
-        return self._pin.sizeHint() if self._pin is not None else QSize()
-
-    def _pack_lines(self, width, reduced_line):
-        """按可用宽度贪心装箱, 返回 [(items, line_w, line_h), ...]。
-
-        reduced_line 行的可用宽度扣除右侧固定项占位 (负数表示不扣)。
-        """
-        pin_w = 0
-        if self._pin is not None and reduced_line >= 0:
-            pin_w = self._pin_size().width() + self.spacing()
-        lines = []
-        cur, cur_w, cur_h = [], 0, 0
-        for item in self._items:
-            hint = item.sizeHint()
-            avail = width - (pin_w if len(lines) == reduced_line else 0)
-            add = hint.width() + (self.spacing() if cur else 0)
-            if cur and cur_w + add > avail:
-                lines.append((cur, cur_w, cur_h))
-                cur, cur_w, cur_h = [], 0, 0
-                add = hint.width()
-            cur.append(item)
-            cur_w += add
-            cur_h = max(cur_h, hint.height())
-        if cur:
-            lines.append((cur, cur_w, cur_h))
-        return lines
-
-    def _do_layout(self, rect, test_only):
-        margins = self.contentsMargins()
-        area = rect.adjusted(margins.left(), margins.top(),
-                             -margins.right(), -margins.bottom())
-        spacing = self.spacing()
-        pin = self._pin
-        pin_hint = self._pin_size()
-
-        # 先按整宽装箱定行数, 再令固定项所在行 (默认第 2 行) 预留右缘;
-        # 固定项让该行变挤可能多折一行, 但行号仍有效, 只需钳到末行。
-        lines = self._pack_lines(area.width(), -1)
-        pin_line = -1
-        if pin is not None:
-            pin_line = min(1, len(lines) - 1)
-            lines = self._pack_lines(area.width(), pin_line)
-            pin_line = min(pin_line, len(lines) - 1)
-
-        y = area.y()
-        for li, (items, _lw, lh) in enumerate(lines):
-            # 同行子项按行高垂直居中: 标签与高控件 (下拉框/输入框/按钮)
-            # 共享一条水平中线, 否则矮控件顶在行首会显得参差不齐
-            line_h = max(lh, pin_hint.height() if li == pin_line else 0)
-            x = area.x()
-            for item in items:
-                hint = item.sizeHint()
-                iy = y + max(0, (line_h - hint.height()) // 2)
-                if not test_only:
-                    item.setGeometry(QRect(QPoint(x, iy), hint))
-                x += hint.width() + spacing
-            if li == pin_line:
-                px = area.right() + 1 - pin_hint.width()
-                py = y + max(0, (line_h - pin_hint.height()) // 2)
-                if not test_only:
-                    pin.setGeometry(QRect(QPoint(px, py), pin_hint))
-            y += line_h + spacing
-        if lines:
-            y -= spacing
-        return y - rect.y() + margins.bottom()
 
 
 def update_path_labels(labels_config, is_dark):
