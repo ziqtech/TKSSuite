@@ -295,7 +295,7 @@ class KonNameResolver:
                 'hp_damage': vals[4],
                 'mp_damage': vals[5],
                 'accuracy': vals[6],
-                'extra_damage': vals[7],
+                'unused14': vals[7],
                 'hp_restore': vals[8],
                 'mp_restore': vals[9],
                 'inflict_status_lo': vals[10],

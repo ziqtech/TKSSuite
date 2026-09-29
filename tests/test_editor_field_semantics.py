@@ -99,7 +99,7 @@ class KonFieldSemanticsTests(unittest.TestCase):
                            target_filter=-21555, exec_flags=-32506,
                            inflict_status_lo=-32768, inflict_status_hi=-32768,
                            remove_status_lo=-32768, remove_status_hi=-32768,
-                           extra_damage=17, unused15=19, unused18=-25)
+                           unused14=17, unused15=19, unused18=-25)
         original = dict(self.record)
         self.editor._populate_edit(self.record)
         self.editor._apply_edit()

@@ -67,7 +67,7 @@ KON_FIELDS = [
     ("hp_damage",        8,  "生命伤害参数",  "0无；-1取攻击力（原版技能编号有特判）；1..1000固定基础值；1001..2000为目标当前生命的(值-1000)%；2001..3000为攻击力+(值-2000)；>3000为攻击力×[1+(值-3000)/100]，非最终伤害"),
     ("mp_damage",       10,  "内力伤害参数",  "0无；1..1000固定基础值；>1000为目标当前内力的(值-1000)%，仍受命中和结算分支影响"),
     ("accuracy",        12,  "附加命中",      "物理判定中的命中加算项，不是最终命中率；未启用物理位时不按此项计算普通命中"),
-    ("extra_damage",    14,  "保留参数14",    "尚未确认原版用途，不能认定为附加伤害；保留原始数值"),
+    ("unused14",        14,  "保留参数14",    "逆向核实: 原版引擎从不读取此字段——运行块(9D6C28+14)与工作副本(9D6C50+14)全工程零引用，7个结算函数(陷阱/AI/目标/技能执行/玩家效果)均不触达，亦无dword跨读；浴血奮戰(TKKon#163, 馬超)=50 为全表650条孤例，推测是未启用的开发占位。编辑界面隐藏，按原始数值保留"),
     ("hp_restore",      16,  "生命回复参数",  "0无；1..1000固定回复；>1000为目标生命上限的(值-1000)%。实际执行在生命未满时回复并封顶；低于25%是AI收益评估条件，不是实际回复门槛"),
     ("mp_restore",      18,  "内力回复参数",  "0无；1..1000固定回复；>1000为目标内力上限的(值-1000)%。实际执行在内力未满时回复并封顶；低于25%仅影响AI收益评估"),
     ("inflict_status_lo", 20, "施加状态1-16",  "施加状态掩码低16位；实际附加仍受概率、抗性和状态槽限制"),
@@ -503,9 +503,21 @@ class KonEditor(FieldUndoMixin, EditorMainWindow):
         self.edit_layout.addWidget(preview)
 
         # 字段组 — Dock 风格分组 (列数: 4, 4, 5, 5)
-        self._build_field_group("战斗执行参数 (offset 0–6)", ACTIVE_FIELDS[:4], 4)
-        self._build_field_group("伤害/回复参数 (offset 8–18)", ACTIVE_FIELDS[4:10], 4)
-        self._build_field_group("状态与行动计时 (offset 20–28)", ACTIVE_FIELDS[10:15], 4)
+        # 分组按键名取字段, 不用位置切片 (保留参数14 已隐藏, 位置会漂移)
+        af = {f[0]: f for f in ACTIVE_FIELDS}
+        self._build_field_group(
+            "战斗执行参数 (offset 0–6)",
+            [af[k] for k in ('exec_mode', 'target_param',
+                             'target_filter', 'tkact_id')], 4)
+        self._build_field_group(
+            "伤害/回复参数 (offset 8–18)",
+            [af[k] for k in ('hp_damage', 'mp_damage', 'accuracy',
+                             'hp_restore', 'mp_restore')], 4)
+        self._build_field_group(
+            "状态与行动计时 (offset 20–28)",
+            [af[k] for k in ('inflict_status_lo', 'inflict_status_hi',
+                             'remove_status_lo', 'remove_status_hi',
+                             'timing_mod')], 4)
         self._build_field_group("执行标志 (offset 38)", [KON_FIELDS[-1]], 1)
         self._build_field_group("未确认参数（只读保留，offset 30–36）", KON_FIELDS[15:19], 4)
 
