@@ -5,17 +5,24 @@ TKKon 名称动态解析器 — 替代静态 tkkon_names.csv
 使 MOD 修改技能分配后名称自动更新。
 
 数据来源:
-  WarPC.dat  → 角色→技能→TKKon 映射 (fields[273+i])
-  TKSkill.dat → 技能名称 (经由 TKT.dat)
+  WarPC.dat  → 角色→技能→TKKon 映射 (fields[273+技能编号]) 与角色名
+  WarPC.dat.tksx → 扩展技能 (350..696) 的角色级 TKKon 稀疏覆盖
+  TKSkill.dat → 技能名称 (经由 TKT.dat, 条数按文件大小动态推导)
   TKItem.dat → 物品→TKKon 映射 (tkkon_index field)
   TKT.dat     → 显示文本 (Big5)
   TKKon.dat   → TKKon 条目自身字段 (tkact_id, exec_flags)
 
 名称优先级:
-  1. 角色技能: "角色名《技能名》" (via WarPC→TKSkill→TKT)
+  1. 角色技能: "角色名《技能名》" (via WarPC→TKSkill→TKT;
+     扩展技能 via WarPC.dat.tksx 稀疏覆盖)
   2. 物品使用: "物品名" (via TKItem→TKT, 需 exec_flags bit1=1)
   3. 动画引用: "动画#N" (via tkact_id)
   4. 空槽位:   "空槽-#N"
+
+扩展技能默认效果: 技能 350..696 无角色覆盖时统一指向
+  TKKon 590 (GAME_EXTENDED_TKKON_DEFAULT), 该条目显示为
+  "扩展技能默认效果(技能350..N)"。存档内的角色级覆盖无法
+  在仅加载游戏目录的编辑器中体现。
 """
 
 import os
@@ -23,14 +30,28 @@ import re
 import struct
 
 from editor_utils.lzss import lzss_decompress_dat
+from editor_utils.skill_extension import (
+    GAME_EXTENDED_TKKON_DEFAULT,
+    GAME_SKILL_BASE,
+    parse_skill_extension,
+)
 from editor_utils.tkt_loader import load_tkt_simple
 
 # ── 格式常量 (与各编辑器保持一致) ──
 WARPC_REC = 1054         # WarPC.dat 每条记录字节数
 WARPC_FIELD_COUNT = 527  # WarPC 每条记录的 int16 字段数
 
-SKILL_REC = 94           # TKSkill.dat 每条记录字节数
-SKILL_CNT = 350          # TKSkill 最大记录数
+# WarPC 技能效果区 (引擎协议: 按技能编号直接寻址, 见
+# docs/技能扩展与存档兼容设计方案.md §2.4):
+#   字索引 273..524 ↔ 常规技能 0..251
+#   字索引 525      → 普攻(技能344)特殊读取, 不走 273+编号 公式
+#   字索引 526      → 战斗精灵索引, 不是技能效果字段
+WARPC_EFFECT_BASE = 273
+WARPC_LEGACY_SKILL_MAX = 251
+WARPC_NORMAL_ATTACK_FIELD = 525
+NORMAL_ATTACK_SKILL = 344  # 普攻 (TKSkill type=0 列表末位, 名称固定"攻擊")
+
+SKILL_REC = 94           # TKSkill.dat 每条记录字节数 (条数动态, tkskill_expand 后含 350+ 扩展技能)
 
 ITEM_REC = 64            # TKItem.dat 每条记录字节数
 
@@ -163,6 +184,7 @@ class KonNameResolver:
         self._resolve_protagonist_attacks()
 
         # 5. 加载 WarPC — 角色→指令技能→TKKon 映射
+        #    (旧版 fields[273+i] 槽位 + WarPC.dat.tksx 扩展技能稀疏覆盖)
         self._resolve_from_warpc(tks_dir, tkt, skill_names, skill_types, kon_entries)
 
         # 6. 加载 TKItem — 物品→TKKon 映射 (补充)
@@ -193,8 +215,9 @@ class KonNameResolver:
           names: {skill_index: skill_name}
           types: {skill_index: type_value}   (0=指令, 1=主动, 2=被动, 3=移动)
 
-        与 skill_editor.py load_skills() + warpc_editor.py
-        _load_skill_names() 保持一致。
+        与 warpc_editor.py _load_skill_names() 保持一致: 条数按解压后
+        大小动态推导 (tkskill_expand 后含 350..696 扩展技能),
+        不再限于原版 350 条。
         """
         path = os.path.join(tks_dir, 'TKSkill.dat')
         if not os.path.exists(path):
@@ -211,7 +234,7 @@ class KonNameResolver:
 
         names: dict[int, str] = {}
         types: dict[int, int] = {}
-        for i in range(SKILL_CNT):
+        for i in range(len(dec) // SKILL_REC):
             off = i * SKILL_REC
             if off + 6 > len(dec):
                 break
@@ -295,11 +318,17 @@ class KonNameResolver:
 
         对于 WarPC 每条记录:
           fields[0] = 角色名 TKT ID
-          fields[273+i] = 第 i 个指令技能(type=0)对应的 TKKon ID
+          fields[273+技能编号] = 常规技能 0..251 的 TKKon ID (直接寻址)
+          fields[525] = 普攻(技能344)特殊读取字段
+          扩展技能 350..696 走 WarPC.dat.tksx 稀疏覆盖 (默认 TKKon 590)
 
         同一 TKKon 可能被多个指令技能引用（例如张辽的攻击、引导射击、
         散箭射击都指向同一个 TKKon）。此方法会收集所有技能名，
         用顿号连接："张辽《攻击、引导射击、散箭射击》"。
+
+        扩展技能 (350..696) 不走旧版槽位: 其 TKKon 映射来自
+        WarPC.dat.tksx 扩展块的稀疏角色覆盖 (语义见 skill_extension),
+        与旧版引用合并进同一份名称聚合。
 
         与 warpc_editor.py load_warpc() +
         _build_skill_effect_section 保持一致。
@@ -321,21 +350,24 @@ class KonNameResolver:
             return
 
         # 获取所有 type=0 指令技能的索引列表 (按索引升序)
-        # 与 warpc_editor.py _build_skill_effect_section L1457 一致:
-        #   active_indices = [i for i in range(350) if skill_types.get(i)==0]
+        # 引擎按 273+技能编号 直接寻址, 只有常规技能 0..251 占用旧版
+        # 字段; 扩展技能 (350+) 走 TKSX 覆盖层, 344 由字索引 525 特殊
+        # 读取, 均不进入此列表
         active_indices = sorted(
-            i for i, t in skill_types.items() if t == 0
+            i for i, t in skill_types.items()
+            if t == 0 and i <= WARPC_LEGACY_SKILL_MAX
         )
         if not active_indices:
             # 无 skill_types 信息时回退: 使用所有有名称的技能索引
-            active_indices = sorted(skill_names.keys())
+            active_indices = sorted(
+                i for i in skill_names if i <= WARPC_LEGACY_SKILL_MAX)
 
         char_count = len(dec) // WARPC_REC
-        max_effect_slots = min(len(active_indices), WARPC_FIELD_COUNT - 273)
 
         # ── 第一遍: 收集所有 (角色, 技能) → TKKon 映射 ──
         # TKKon ID → {char_name: [skill_name1, skill_name2, ...]}
         kon_refs: dict[int, dict[str, list[str]]] = {}
+        char_names: dict[int, str] = {}
 
         for ci in range(char_count):
             off = ci * WARPC_REC
@@ -346,25 +378,20 @@ class KonNameResolver:
                 char_name = "主角[敌]"
             else:
                 char_name = self._resolve_tkt_name(char_name_id, tkt, f"角色#{ci}")
+            char_names[ci] = char_name
             if not char_name:
                 continue
 
-            for ei in range(max_effect_slots):
-                field_off = off + (273 + ei) * 2
+            for skill_idx in active_indices:
+                field_off = off + (WARPC_EFFECT_BASE + skill_idx) * 2
                 if field_off + 2 > len(dec):
-                    break
+                    continue
                 kon_id = struct.unpack_from('<h', dec, field_off)[0]
 
                 if kon_id < 0 or kon_id >= self._kon_cnt:
                     continue
 
-                skill_idx = active_indices[ei]
-                # 与 warpc_editor.py L1473 一致，但使用游戏内实际名称
-                if skill_idx == 344:
-                    skill_name = "攻擊"
-                else:
-                    skill_name = skill_names.get(skill_idx, f"技能#{skill_idx}")
-
+                skill_name = skill_names.get(skill_idx, f"技能#{skill_idx}")
                 if kon_id not in kon_refs:
                     kon_refs[kon_id] = {}
                 char_skills = kon_refs[kon_id]
@@ -372,9 +399,38 @@ class KonNameResolver:
                     char_skills[char_name] = []
                 char_skills[char_name].append(skill_name)
 
+            # 普攻覆盖: 字索引 525 特殊读取 (不走 273+编号 公式)
+            field_off = off + WARPC_NORMAL_ATTACK_FIELD * 2
+            if field_off + 2 <= len(dec):
+                kon_id = struct.unpack_from('<h', dec, field_off)[0]
+                if 0 <= kon_id < self._kon_cnt:
+                    if kon_id not in kon_refs:
+                        kon_refs[kon_id] = {}
+                    char_skills = kon_refs[kon_id]
+                    if char_name not in char_skills:
+                        char_skills[char_name] = []
+                    char_skills[char_name].append("攻擊")
+
+        # ── TKSX 扩展块: 稀疏角色覆盖 (技能350..696) → TKKon ──
+        # 扩展技能默认统一指向 TKKon 590, 仅与默认不同的覆盖才存入
+        # 稀疏表; 指向默认值的覆盖不产生独立命名
+        extension = self._load_tksx_extension(path)
+        if extension is not None:
+            for entry in extension.overrides:
+                if entry.tkkon_id == GAME_EXTENDED_TKKON_DEFAULT:
+                    continue
+                char_name = (char_names.get(entry.actor_id)
+                             or f"角色#{entry.actor_id}")
+                skill_name = skill_names.get(
+                    entry.skill_id, f"技能#{entry.skill_id}")
+                skills = kon_refs.setdefault(
+                    entry.tkkon_id, {}).setdefault(char_name, [])
+                if skill_name not in skills:
+                    skills.append(skill_name)
+
         # ── 第二遍: 合并同角色多技能用顿号, 不同角色用空格 ──
         for kon_id, char_skills in kon_refs.items():
-            # 已通过 WarPC 以外的途径解析过 (不太可能, 但做防御)
+            # 已通过 WarPC 以外的途径解析过 (主角武器攻击 0-6, 但做防御)
             if kon_id in self._names:
                 continue
 
@@ -392,6 +448,33 @@ class KonNameResolver:
 
             # 不同角色用空格拼接: 殭屍《攻擊》 殭屍兵《攻擊》
             self._names[kon_id] = ' '.join(parts)
+
+        # ── 扩展技能默认效果: 技能350+ 无角色覆盖时统一指向 TKKon 590 ──
+        # 依据 tkskill_expand 补丁: 旧技能 <350 保持 WarPC 偏移,
+        # 技能 350..696 默认 TKKon 590 (可由稀疏角色覆盖)。
+        # 若该条目已被旧版 WarPC 映射命名, 保留更具体的旧版名称。
+        ext_max = max(
+            (i for i in skill_types if i >= GAME_SKILL_BASE), default=-1)
+        if (ext_max >= GAME_SKILL_BASE
+                and GAME_EXTENDED_TKKON_DEFAULT not in self._names):
+            self._names[GAME_EXTENDED_TKKON_DEFAULT] = (
+                f"扩展技能默认效果(技能{GAME_SKILL_BASE}..{ext_max})")
+
+    def _load_tksx_extension(self, warpc_path: str):
+        """加载 WarPC.dat.tksx 旁车扩展块 (扩展技能状态与 TKKon 覆盖)。
+
+        与 warpc_editor 模板模式一致: 扩展块存放在 WarPC.dat 同目录
+        的 .tksx 旁车文件; 缺失或解析失败按无扩展块处理, 不阻断
+        名称构建。
+        """
+        sidecar = warpc_path + '.tksx'
+        if not os.path.exists(sidecar):
+            return None
+        try:
+            with open(sidecar, 'rb') as f:
+                return parse_skill_extension(f.read())
+        except Exception:
+            return None
 
     # ── TKItem 解析: 物品 → TKKon ──
 
