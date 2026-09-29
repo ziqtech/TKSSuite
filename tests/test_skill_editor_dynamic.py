@@ -804,16 +804,14 @@ class SkillEditorFieldSemanticsTests(unittest.TestCase):
 
                         def confirm(dlg):
                             self.assertIn("状态抗性", dlg.windowTitle())
-                            self.assertEqual(len(dlg.checkboxes), 16)
+                            # 空值槽位 (状态16/32) 已从弹窗移除, 仅剩 15 个有效复选框
+                            self.assertEqual(len(dlg.checkboxes), 15)
                             boxes = dict(dlg.checkboxes)
-                            self.assertEqual(boxes[15].text(), f"{last}. 未知状态位 {last}")
-                            self.assertEqual(boxes[15].isChecked(), bool(high))
-                            self.assertFalse(boxes[15].isEnabled())
+                            self.assertNotIn(15, boxes)
                             if action == "toggle":
                                 boxes[1].setChecked(True)
                             else:
                                 dlg._set_all_checked(action == "all")
-                            self.assertEqual(boxes[15].isChecked(), bool(high))
                             dlg._ok()
                             return QDialog.Accepted
 

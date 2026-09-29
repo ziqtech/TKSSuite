@@ -1492,15 +1492,11 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
     def _pick_status(self, fn):
         base = 0 if fn == 'immunity1' else 16
         cur = int(self.widget_map[fn].text() or 0) & 0xFFFF
+        # 15=第二个"连计" (回合数表占位), 31=第32位 (超出名称表): 空值槽位
+        # 直接移除 (与 item/warpc 一致), 遗留置位经下方 OR 原样保留
         dlg = StatusPickerDialog(self, f"选择状态抗性 ({base + 1}–{base + 16})",
-                                 RESISTANCE_STATUS_NAMES, cur, base,
-                                 self._get_icon_pixmap, False)
-        for bit, cb in dlg.checkboxes:
-            cb.setText(f"{base + bit + 1}. {RESISTANCE_STATUS_NAMES[base + bit]}")
-            if bit == 15:
-                cb.setEnabled(False)
-                cb.setToolTip("此状态位语义未明，保留原值，不随全选/全清修改。")
-                cb.toggled.connect(lambda _, box=cb: box.setChecked(bool(cur & 0x8000)))
+                                 STATUS_NAMES, cur, base,
+                                 self._get_icon_pixmap, False, hidden_slots={15})
         if dlg.exec() == QDialog.Accepted and dlg.selected_mask is not None:
             mask = (dlg.selected_mask & 0x7FFF) | (cur & 0x8000)
             value = mask if mask < 0x8000 else mask - 0x10000

@@ -126,8 +126,9 @@ class KonFieldSemanticsTests(unittest.TestCase):
                 labels = [label.text() for label in self.editor.extra_map[key].findChildren(QLabel)]
                 self.assertTrue(any(f"{absolute_bit}." in label for label in labels))
                 def accept(dialog):
-                    self.assertEqual(len(dialog.checkboxes), 16)
-                    self.assertTrue(dialog.checkboxes[15][1].isChecked())
+                    # 空值槽位 (状态16/32) 已从弹窗移除, 仅剩 15 个有效复选框
+                    self.assertEqual(len(dialog.checkboxes), 15)
+                    self.assertNotIn(15, dict(dialog.checkboxes))
                     dialog._ok()
                     return QDialog.Accepted
                 with patch.object(kon.StatusPickerDialog, "exec", accept):
@@ -147,7 +148,10 @@ class KonFieldSemanticsTests(unittest.TestCase):
         self.assertIn("当前物品结算", self.editor.preview_type.text())
         self.assertNotIn("Buff/自身", self.editor.preview_type.text())
         self.assertNotIn("法术攻击", self.editor.preview_type.text())
-        self.assertEqual(self.editor.table.item(0, 7).text(), kon.describe_exec_flags(3))
+        # 列表 5 列 (选点/作用范围/执行标志仅在右侧编辑面板展示);
+        # tkact_id=0 的非空记录不被按空记录过滤, 行正常出现在列表
+        self.assertEqual(self.editor.table.columnCount(), 5)
+        self.assertEqual(self.editor.table.item(0, 1).text(), "0")
 
 
 if __name__ == "__main__":

@@ -88,6 +88,8 @@ ACTIVE_FIELDS = [f for f in KON_FIELDS if not f[0].startswith('unused')]
 # 描述解析函数
 # ============================================================
 
+# 仅用于已置位数据的展示 (施加/解除预览与标签); 弹窗改用 STATUS_NAMES
+# + hidden_slots, 空值槽位不出现在可选项里
 STATUS_BIT_NAMES = [
     STATUS_NAMES[i] if i < len(STATUS_NAMES) and i not in (15, 31)
     else f"未知状态位 {i + 1}"
@@ -142,7 +144,9 @@ def describe_exec_flags(val):
 
 
 def describe_hp_damage(val):
-    if val == -1: return "攻击力（原版技能另有特判）"
+    # -1 运行时按原版技能编号走特判伤害 (语义见 KON_FIELDS 字段提示与字段参考);
+    # 界面统一只显示基础语义, 避免括注文案刷屏
+    if val == -1: return "攻击力"
     if val == 0: return "无生命伤害"
     if 1 <= val <= 1000: return f"固定基础值={val}"
     if 1001 <= val <= 2000: return f"目标当前生命×{val - 1000}%"
@@ -166,9 +170,9 @@ def kon_record_name(rec, tkt, resolver=None, compact_threshold=0):
             return name
     if not any(rec.get(fn, 0) for fn, _, _, _ in KON_FIELDS):
         return f"全零记录-#{idx}"
+    # 兜底名只留动画引用, 不拼选点/作用参数 (那些在列表和面板另有列展示)
     cid = rec.get('tkact_id', 0)
-    animation = "继承普攻动画" if cid == -1 else f"动画#{cid}"
-    return f"{animation} {describe_exec_mode(rec.get('exec_mode', 0))} / {describe_target_param(rec.get('target_param', 0))}"
+    return "继承普攻动画" if cid == -1 else f"动画#{cid}"
 
 def load_kon(fp):
     with open(fp, 'rb') as f:
@@ -442,12 +446,12 @@ class KonEditor(FieldUndoMixin, EditorMainWindow):
 
     def _build_table(self, parent):
         self.table = AdaptiveTableWidget(
-            0, 8,
-            stretch_columns={3},
-            minimum_widths=[46, 52, 52, 96, 72, 70, 72, 54],
+            0, 5,
+            stretch_columns={2},
+            minimum_widths=[52, 52, 96, 150, 165],
             row_height=44,
         )
-        self.table.setHorizontalHeaderLabels(["序号", "动画", "选点", "名称", "作用范围", "伤害参数", "目标", "执行标志"])
+        self.table.setHorizontalHeaderLabels(["序号", "动画", "名称", "伤害参数", "目标"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -837,18 +841,14 @@ class KonEditor(FieldUndoMixin, EditorMainWindow):
             else:
                 color = QColor("#AAAAAA") if getattr(self, '_is_dark', True) else QColor("#999999")  # 主题感知: 深浅两档
 
-            dist_str = describe_exec_mode(r['exec_mode'])
-            area_str = describe_target_param(r['target_param'])
             dmg_str = describe_hp_damage(r['hp_damage'])
 
             tf_str = describe_target_filter(r['target_filter'])
-            ef_str = describe_exec_flags(r['exec_flags'])
 
-            vals = [str(r['index']), str(r['tkact_id']), dist_str,
-                    nm, area_str, dmg_str, tf_str, ef_str]
-            sort_keys = [r['index'], r['tkact_id'], _signed_high_byte(r['exec_mode']),
-                         None, _signed_high_byte(r['target_param']), r['hp_damage'],
-                         r['target_filter'], r['exec_flags'] & 0xFFFF]
+            vals = [str(r['index']), str(r['tkact_id']),
+                    nm, dmg_str, tf_str]
+            sort_keys = [r['index'], r['tkact_id'],
+                         None, r['hp_damage'], r['target_filter']]
 
             self.table.insertRow(row)
             for c_col, v in enumerate(vals):
@@ -973,10 +973,15 @@ class KonEditor(FieldUndoMixin, EditorMainWindow):
         base = 0 if fn.endswith('_lo') else 16
         inf = fn.startswith('inflict')
         title = "选择导致状态 (位掩码)" if inf else "选择解除状态 (位掩码)"
-        dlg = StatusPickerDialog(self, title, STATUS_BIT_NAMES, cur, base,
-                                 self._get_icon_pixmap, inf)
+        # 15=第二个"连计" (回合数表占位), 31=第32位 (超出名称表): 与
+        # item/warpc 一致, 弹窗内直接移除空值槽位 (idx 31 由越界截断排除)
+        dlg = StatusPickerDialog(self, title, STATUS_NAMES, cur, base,
+                                 self._get_icon_pixmap, inf, hidden_slots={15})
         if dlg.exec() == QDialog.Accepted and dlg.selected_mask is not None:
-            new_mask = dlg.selected_mask
+            # 遗留数据中已置位的空值槽位 (相对 bit15) 原样保留, 不被确定操作清掉
+            new_mask = dlg.selected_mask | (cur & 0x8000)
+            if new_mask >= 0x8000:
+                new_mask -= 0x10000
             self.widget_map[fn].setText(str(new_mask))
             self._update_status_label(fn, new_mask & 0xFFFF)
 
