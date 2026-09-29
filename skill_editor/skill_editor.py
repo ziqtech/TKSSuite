@@ -1202,6 +1202,8 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "加载失败", str(e))
             self.records = []
+        # 数据整体替换后旧编辑定位可能越界 (新目录记录更少), 必须同步失效
+        self._editing_idx = None
         self._update_paths()
         self._set_edit_enabled(True)
         self._apply_filter()
@@ -1293,8 +1295,9 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
 
         返回 True 表示用户取消切换 (选中已恢复到原记录)。
         """
-        if self._editing_idx is None or self._editing_idx == new_idx:
-            return False
+        if (self._editing_idx is None or self._editing_idx == new_idx
+                or not 0 <= self._editing_idx < len(self.records)):
+            return False  # 含重载/导入 MOD 后残留的失效定位, 直接放行重填
         rec = self.records[self._editing_idx]
         combo_keys = {'type', 'atk_type'}
         if not form_edits_pending(self.widget_map, rec,
@@ -1539,6 +1542,9 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
 
     def _apply_edit(self):
         if self._editing_idx is None: return
+        if not 0 <= self._editing_idx < len(self.records):
+            self._editing_idx = None  # 重载/导入后的失效定位, 置空等待重选
+            return
         rec = self.records[self._editing_idx]
         if is_warpc_extension_skill_index(rec['index']):
             return
@@ -1601,7 +1607,8 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
             return 0
 
     def _reset_edit(self):
-        if self._editing_idx is not None:
+        if (self._editing_idx is not None
+                and 0 <= self._editing_idx < len(self.records)):
             self._populate_edit(self.records[self._editing_idx])
 
     def _new_skill(self):
