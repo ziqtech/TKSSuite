@@ -1237,11 +1237,6 @@ class MatEditorApp(MatModIOMixin, MatScriptPanelMixin, EditorMainWindow):
     EDITOR_KEY = "mat_editor"
     DEFAULT_SIZE = (1800, 900)
     MIN_SIZE = (1480, 640)  # 宽须容纳三栏最小宽之和 (340+640+460+分隔条)
-    # 右栏宽度硬上限。默认宽度不变: setSizes 校准值 [470, 676, 642] 实际
-    # 渲染 右≈630 (Qt 按比例微调), 期望宽即取该渲染值; 最大化时富余宽度
-    # 全部留给中间预览画布, 右栏不再随 3:2 拉伸因子膨胀。
-    RIGHT_PANE_MAX_WIDTH = 642
-    _desired_right_width = 630
 
     HELP_TEXT = (
         "功能: 编辑《三国群侠传》地图实体数据\n\n"
@@ -1433,14 +1428,13 @@ class MatEditorApp(MatModIOMixin, MatScriptPanelMixin, EditorMainWindow):
         # (需在三栏构建完成后创建: 工具栏控件要连接 self._canvas 上的方法)
         main_layout.insertWidget(0, self._build_preview_toolbar())
 
-        # setSizes 输入经校准: 实际渲染 左470 / 中~665 / 右630 (Qt 按比例分配有微调)
-        self.splitter.setSizes([470, 676, 642])
-        # 拉伸因子 中:右 = 3:2; 右栏宽度由 _sync_splitter_width 收敛到
-        # 期望宽 (_desired_right_width), 最大化富余全部归中间预览画布
+        # setSizes: 左右两栏为固定宽 (拉伸因子 0, 缩放时不伸缩), 旧校准值
+        # 642 在 3:2 因子下实际渲染 630 — 直接以 630 为准保持默认观感
+        self.splitter.setSizes([470, 688, 630])
+        # 拉伸因子: 最大化/缩放时富余全部归中间预览画布, 左右两栏保持原宽
         self.splitter.setStretchFactor(0, 0)
-        self.splitter.setStretchFactor(1, 3)
-        self.splitter.setStretchFactor(2, 2)
-        self.splitter.splitterMoved.connect(self._on_splitter_moved)
+        self.splitter.setStretchFactor(1, 1)
+        self.splitter.setStretchFactor(2, 0)
 
         # Bottom path bar
         path_layout = QHBoxLayout()
@@ -3839,59 +3833,9 @@ class MatEditorApp(MatModIOMixin, MatScriptPanelMixin, EditorMainWindow):
                                 f"成功导入:\n  实体: {n_entities} 个\n  DefUnit: {n_defunits} 条\n  DEFINE: {n_defines} 个")
 
     # =========== 窗口缩放事件 ===========
-    def _on_splitter_moved(self, _pos, _index):
-        """用户拖动分割条时记录右栏期望宽。
-
-        splitterMoved 在 setSizes/布局过程中也会发出, 此时 sizes() 还是
-        中间值 — 延迟到事件循环下一拍 (布局落定后) 再记录。同步过程中
-        经 _syncing_splitter 屏蔽。"""
-        if getattr(self, '_syncing_splitter', False):
-            return
-        QTimer.singleShot(0, self._record_desired_right)
-
-    def _record_desired_right(self):
-        if getattr(self, '_syncing_splitter', False):
-            return
-        sizes = self.splitter.sizes()
-        if len(sizes) == 3 and sizes[2] > 0:
-            self._desired_right_width = sizes[2]
-
-    def _sync_splitter_width(self):
-        """窗口尺寸变化时把右栏收敛到期望宽 (用户拖动值与硬上限取小)。
-
-        默认尺寸下右栏已等于期望宽, 本函数为空操作 (默认宽度不变);
-        最大化时把超出期望宽的部分全部让给中间预览画布, 缩回窗口时
-        右栏恢复期望宽。空间不足以同时容纳中栏最小宽与期望右栏宽时
-        (小窗口) 不介入, 交给 Qt 按各栏最小宽自行收缩。"""
-        splitter = getattr(self, 'splitter', None)
-        if splitter is None or splitter.count() != 3:
-            return
-        total = splitter.width()
-        if total <= 0:
-            return
-        left, _center, right = splitter.sizes()
-        desired = min(getattr(self, '_desired_right_width',
-                              self.RIGHT_PANE_MAX_WIDTH),
-                      self.RIGHT_PANE_MAX_WIDTH)
-        if right == desired:
-            return
-        center_widget = splitter.widget(1)
-        center_min = center_widget.minimumWidth() if center_widget else 0
-        handles = splitter.handleWidth() * (splitter.count() - 1)
-        if left + center_min + desired + handles > total:
-            return
-        # sizes() 之和不含分隔条宽, 可用宽须先扣除
-        available = total - handles
-        self._syncing_splitter = True
-        try:
-            splitter.setSizes([left, max(1, available - left - desired), desired])
-        finally:
-            self._syncing_splitter = False
-
     def resizeEvent(self, event):
         """窗口大小改变时，防抖触发自适应重绘"""
         super().resizeEvent(event)
-        self._sync_splitter_width()
         if hasattr(self, '_data') and self._data.records:
             self._resize_timer.start(100)
 
