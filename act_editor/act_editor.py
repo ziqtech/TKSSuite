@@ -1555,6 +1555,11 @@ class ActEditorV2(EditorMainWindow):
 
         TKAct 条目被 TKKon.tkact_id 和 TKItem.tkkon_index→TKKon.tkact_id
         多对一引用。此方法收集所有引用源并合并显示。
+
+        与 kon_editor.kon_record_name 一致: "空槽-#N" 与 "动画#N" 类
+        解析器兜底名不作为名称 (动画#N 对 act 行是循环噪声, 扩展
+        TKKon 条目未接线时尤其如此)。多来源名称用空格连接成单行,
+        与解析器的跨角色拼接约定一致。
         """
         import struct
         names: dict[int, list[str]] = {}
@@ -1587,7 +1592,7 @@ class ActEditorV2(EditorMainWindow):
 
         for kon_idx, act_idx in kon_act_map.items():
             name = resolver.get_name(kon_idx, compact_threshold=compact_threshold)
-            if name and not name.startswith('空槽-'):
+            if name and not name.startswith(('空槽-', '动画#')):
                 if act_idx not in names:
                     names[act_idx] = []
                 if name not in names[act_idx]:
@@ -1613,7 +1618,7 @@ class ActEditorV2(EditorMainWindow):
                     if tkkon_idx in kon_act_map:
                         act_idx = kon_act_map[tkkon_idx]
                         kon_name = resolver.get_name(tkkon_idx, compact_threshold=compact_threshold)
-                        if kon_name and not kon_name.startswith('空槽-'):
+                        if kon_name and not kon_name.startswith(('空槽-', '动画#')):
                             if act_idx not in names:
                                 names[act_idx] = []
                             if kon_name not in names[act_idx]:
@@ -1621,7 +1626,7 @@ class ActEditorV2(EditorMainWindow):
             except Exception:
                 pass
 
-        return {k: '\n'.join(v) for k, v in names.items()}
+        return {k: ' '.join(v) for k, v in names.items()}
 
     # ── 路径更新 ──
 
@@ -1699,7 +1704,10 @@ class ActEditorV2(EditorMainWindow):
                 nm = '空槽'
             self.table.insertRow(row)
             self.table.setItem(row, 0, QTableWidgetItem(str(idx)))
-            self.table.setItem(row, 1, QTableWidgetItem(nm))
+            name_item = QTableWidgetItem(nm)
+            # 长名称被列宽截断时悬浮看全文 (与 kon_editor 各格 tooltip 一致)
+            name_item.setToolTip(nm)
+            self.table.setItem(row, 1, name_item)
             n_layer = len(entry_active_layers(entry))
             self.table.setItem(row, 2, QTableWidgetItem(f"{n_layer} 个图层"))
             # 颜色标记 (名称语义优先)
