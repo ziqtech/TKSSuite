@@ -58,6 +58,8 @@ class PreviewCanvas(QWidget):
         self._entry_title = ""
         self._float_specs = []
         self._cursor_over_sprite = False
+        self._show_attacker = True
+        self._show_defender = True
 
     def set_entry_title(self, title):
         self._entry_title = title
@@ -65,6 +67,12 @@ class PreviewCanvas(QWidget):
 
     def set_float_specs(self, specs):
         self._float_specs = list(specs)
+        self.update()
+
+    def set_marker_visibility(self, show_attacker, show_defender):
+        """切换攻击方原点与受击方假想敌标注的绘制。"""
+        self._show_attacker = show_attacker
+        self._show_defender = show_defender
         self.update()
 
     def set_frame_data(self, composite_pixmap, comp_ox, comp_oy,
@@ -109,27 +117,29 @@ class PreviewCanvas(QWidget):
             painter.drawText(int(cx) + 2, int(cy) - 2, f"#{slot}")
 
         # 原点十字 (攻击方)
-        ox_c, oy_c = self._origin_cv
-        pen_green = QPen(QColor(PEN_TRAJECTORY_GREEN), 2)
-        painter.setPen(pen_green)
-        painter.drawLine(int(ox_c - 16), int(oy_c), int(ox_c + 16), int(oy_c))
-        painter.drawLine(int(ox_c), int(oy_c - 16), int(ox_c), int(oy_c + 16))
-        painter.setFont(QFont("Consolas", 7))
-        painter.drawText(int(ox_c + 18), int(oy_c + 4), "攻击方")
+        if self._show_attacker:
+            ox_c, oy_c = self._origin_cv
+            pen_green = QPen(QColor(PEN_TRAJECTORY_GREEN), 2)
+            painter.setPen(pen_green)
+            painter.drawLine(int(ox_c - 16), int(oy_c), int(ox_c + 16), int(oy_c))
+            painter.drawLine(int(ox_c), int(oy_c - 16), int(ox_c), int(oy_c + 16))
+            painter.setFont(QFont("Consolas", 7))
+            painter.drawText(int(ox_c + 18), int(oy_c + 4), "攻击方")
 
         # 假想敌位置 (受击方)
-        ex_c, ey_c = self._enemy_cv
-        pen_red = QPen(QColor(PEN_TRAJECTORY_RED), 2)
-        painter.setPen(pen_red)
-        painter.drawLine(int(ex_c - 16), int(ey_c), int(ex_c + 16), int(ey_c))
-        painter.drawLine(int(ex_c), int(ey_c - 16), int(ex_c), int(ey_c + 16))
-        painter.drawText(int(ex_c + 18), int(ey_c + 4), "受击方")
-        # 假想敌人形
-        painter.fillRect(QRect(int(ex_c - 15), int(ey_c - 40), 30, 40), QColor(BLOCK_SHADOW_BG))
-        painter.setPen(QColor(BLOCK_SHADOW_BORDER))
-        painter.drawRect(QRect(int(ex_c - 15), int(ey_c - 40), 30, 40))
-        painter.setPen(QColor('#f44'))
-        painter.drawText(int(ex_c - 4), int(ey_c - 22), "敌")
+        if self._show_defender:
+            ex_c, ey_c = self._enemy_cv
+            pen_red = QPen(QColor(PEN_TRAJECTORY_RED), 2)
+            painter.setPen(pen_red)
+            painter.drawLine(int(ex_c - 16), int(ey_c), int(ex_c + 16), int(ey_c))
+            painter.drawLine(int(ex_c), int(ey_c - 16), int(ex_c), int(ey_c + 16))
+            painter.drawText(int(ex_c + 18), int(ey_c + 4), "受击方")
+            # 假想敌人形
+            painter.fillRect(QRect(int(ex_c - 15), int(ey_c - 40), 30, 40), QColor(BLOCK_SHADOW_BG))
+            painter.setPen(QColor(BLOCK_SHADOW_BORDER))
+            painter.drawRect(QRect(int(ex_c - 15), int(ey_c - 40), 30, 40))
+            painter.setPen(QColor('#f44'))
+            painter.drawText(int(ex_c - 4), int(ey_c - 22), "敌")
 
         # 伤害飘字
         if self._float_specs:

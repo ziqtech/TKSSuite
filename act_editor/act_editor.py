@@ -394,6 +394,7 @@ class ActEditorV2(EditorMainWindow):
         "  · 多图层 2D 精灵动画编辑\n"
         "  · 6 种图像混合模式\n"
         "  · 实时动画预览\n"
+        "  · 预览标注: 可隐藏攻击方/受击方标记, 受击方距离可调\n"
         "  · 预览敌方受击飘字（按数值出现时间分段，测试总值 999）\n"
         "  · 飘字效果可选：伤害/内力/恢复/Miss/法术反弹/状态等，颜色对齐原版\n"
         "  · 音效触发表编辑\n"
@@ -487,6 +488,8 @@ class ActEditorV2(EditorMainWindow):
         self._preview_dir = 0
         self._preview_speed = 120
         self._preview_vis = {}
+        # 受击方(假想敌)与攻击方原点的预览距离, 仅影响预览不写入数据
+        self._preview_enemy_x = PREVIEW_ENEMY_X
 
         # 时间轴编辑状态
         self._tl_selected_layers = set()
@@ -820,9 +823,9 @@ class ActEditorV2(EditorMainWindow):
         inner.layout().setSpacing(4)
         parent_layout.addWidget(inner, 1)
 
-        # 控制栏分两行：单行会把中央栏的最小宽度推到 1000px 以上，
+        # 控制栏分三行：单行会把中央栏的最小宽度推到 1000px 以上，
         # 进而在默认窗口下挤压左侧列表。第一行放播放/方向/周期，
-        # 第二行放播放头和编辑操作。
+        # 第二行放播放头和编辑操作，第三行放预览标注与受击方距离。
         ctrl = QVBoxLayout()
         ctrl.setContentsMargins(0, 0, 0, 0)
         ctrl.setSpacing(2)
@@ -939,6 +942,52 @@ class ActEditorV2(EditorMainWindow):
         edit_ctrl.addWidget(QPushButton("应用修改", clicked=self._apply_edit))
         edit_ctrl.addWidget(QPushButton("重置", clicked=self._reset_edit))
         ctrl.addLayout(edit_ctrl)
+
+        # 第三行: 预览标注 (攻击方/受击方) 显示隐藏 + 受击方距离。
+        # 距离只影响预览定位 (图层类型 3/4 与飘字锚定受击方), 不写入文件。
+        marker_ctrl = QHBoxLayout()
+        marker_ctrl.setSpacing(4)
+        marker_ctrl.addWidget(QLabel("标注:"))
+        self._show_attacker_cb = QCheckBox("攻击方")
+        self._show_attacker_cb.setChecked(True)
+        self._show_attacker_cb.setToolTip("显示或隐藏预览区的攻击方原点十字标记")
+        self._show_attacker_cb.stateChanged.connect(
+            self._on_marker_vis_changed)
+        marker_ctrl.addWidget(self._show_attacker_cb)
+        self._show_defender_cb = QCheckBox("受击方")
+        self._show_defender_cb.setChecked(True)
+        self._show_defender_cb.setToolTip(
+            "显示或隐藏预览区的受击方(假想敌)十字与人形标记")
+        self._show_defender_cb.stateChanged.connect(
+            self._on_marker_vis_changed)
+        marker_ctrl.addWidget(self._show_defender_cb)
+
+        marker_ctrl.addSpacing(8)
+        marker_ctrl.addWidget(QLabel("受击方距离:"))
+        self._enemy_dist_spin = _NoWheelSpinBox()
+        self._enemy_dist_spin.setRange(0, 640)
+        self._enemy_dist_spin.setValue(PREVIEW_ENEMY_X)
+        # 与"周期"框同理: 主题 QSS 需要预留边框/内边距/箭头宽度,
+        # 80px 保证三位数字可编辑。
+        self._enemy_dist_spin.setFixedWidth(80)
+        self._enemy_dist_spin.setToolTip(
+            "受击方(假想敌)与攻击方原点的水平距离, 仅影响预览, 不写入文件。\n"
+            "图层类型 3/4 的特效以受击方为基准定位, "
+            "可调整此距离模拟实战站位 (默认 160 对应原版预览值)。")
+        self._enemy_dist_spin.valueChanged.connect(
+            self._on_enemy_dist_changed)
+        marker_ctrl.addWidget(self._enemy_dist_spin)
+        dist_slider = QSlider(Qt.Horizontal)
+        dist_slider.setRange(0, 640)
+        dist_slider.setValue(PREVIEW_ENEMY_X)
+        dist_slider.setPageStep(16)
+        dist_slider.setMaximumWidth(160)
+        dist_slider.setToolTip(self._enemy_dist_spin.toolTip())
+        dist_slider.valueChanged.connect(self._on_enemy_dist_changed)
+        self._enemy_dist_slider = dist_slider
+        marker_ctrl.addWidget(dist_slider)
+        marker_ctrl.addStretch()
+        ctrl.addLayout(marker_ctrl)
         inner.layout().addLayout(ctrl)
 
         # 垂直分割: 预览区 + 时间轴区 (工具栏附在时间轴顶部)
@@ -2824,7 +2873,7 @@ class ActEditorV2(EditorMainWindow):
     def _compute_entry_bbox(self, entry):
         if self._aa_data is None and self._af_data is None:
             return None
-        xs = [0, PREVIEW_ENEMY_X]
+        xs = [0, self._preview_enemy_x]
         ys = [0]
         for direction in range(4):
             order = [v for v in entry['dirs'][direction] if v]
@@ -2848,7 +2897,7 @@ class ActEditorV2(EditorMainWindow):
                 eff_dir = direction if (L[2] == 4 or L[0] < 3) else 0
                 ox = L[3 + eff_dir]
                 oy = L[7 + eff_dir]
-                base_x = PREVIEW_ENEMY_X if L[0] in (3, 4) else 0
+                base_x = self._preview_enemy_x if L[0] in (3, 4) else 0
                 for fi in range(n):
                     f = blk.frames[fi]
                     if f.width <= 0 or f.height <= 0:
@@ -2989,6 +3038,24 @@ class ActEditorV2(EditorMainWindow):
         self._preview_dir = self._dir_btns.id(btn)
         self._preview_redraw()
 
+    def _on_marker_vis_changed(self):
+        self.preview_canvas.set_marker_visibility(
+            self._show_attacker_cb.isChecked(),
+            self._show_defender_cb.isChecked())
+
+    def _on_enemy_dist_changed(self, value):
+        """同步滑杆/输入框; 包围盒含受击方位置, 需一并重算。"""
+        self._preview_enemy_x = value
+        for w in (self._enemy_dist_spin, self._enemy_dist_slider):
+            if w.value() != value:
+                w.blockSignals(True)
+                w.setValue(value)
+                w.blockSignals(False)
+        if self._editing_idx >= 0:
+            self._preview_bbox = self._compute_entry_bbox(
+                self.entries[self._editing_idx])
+        self._preview_redraw()
+
     def _preview_redraw(self):
         if self._editing_idx < 0:
             return False
@@ -3062,7 +3129,7 @@ class ActEditorV2(EditorMainWindow):
 
             ox = L[3 + eff_dir]
             oy = L[7 + eff_dir]
-            enemy_x = PREVIEW_ENEMY_X if L[0] in (3, 4) else 0
+            enemy_x = self._preview_enemy_x if L[0] in (3, 4) else 0
             spr_l = frame.x_off + ox + enemy_x
             spr_t = frame.y_off + oy
             spr_r = spr_l + frame.width - 1
@@ -3107,7 +3174,7 @@ class ActEditorV2(EditorMainWindow):
             return (off_x + gx * scale, off_y + gy * scale)
 
         ox_c, oy_c = to_cv(0, 0)
-        ex_c, ey_c = to_cv(PREVIEW_ENEMY_X, 0)
+        ex_c, ey_c = to_cv(self._preview_enemy_x, 0)
 
         # PIL 合成
         comp_w = max(1, int(bw * scale))
