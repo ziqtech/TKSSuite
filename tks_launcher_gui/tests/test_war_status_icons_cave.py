@@ -140,6 +140,7 @@ a2[2]/a2[3] 均为指针解引用。v7.4 误写 movzx esi,word[edx+ebx+8] 把
 
 from __future__ import annotations
 
+import os
 import struct
 from pathlib import Path
 
@@ -781,10 +782,10 @@ def test_icon_decode_matches_truth() -> None:
     """算法级验证 (v7.4): 完整模拟 cave 的对象导航 + RLE 游标解码, 对照
     直接解码 ground truth。覆盖全部状态图标帧 76..106 (st=1..31, 跨块
     44..56) —— v7.3 版只测了块44 且绕过对象导航, 漏掉了记录寻址 bug。"""
-    jvg = Path(__file__).resolve().parents[3] / \
-        "逆向工作区" / "逆向工作区" / "Mu2.JVG"
-    if not jvg.exists():  # 资源不存在时跳过 (CI 环境)
-        print(f"    [skip] {jvg} 不存在")
+    jvg = Path(os.environ["TKS_MU2_JVG"]) if os.environ.get("TKS_MU2_JVG") \
+        else None
+    if jvg is None or not jvg.exists():
+        print("    [skip] 需要设置 TKS_MU2_JVG 指向原版 Mu2.JVG")
         return
     d = jvg.read_bytes()
     block_count = struct.unpack_from("<I", d, 8)[0]
