@@ -305,7 +305,7 @@ start → @@Unit1@Initialize
 - `游戏资源关系数据库.md`（JVG↔角色映射、技能/文本 ID 段）
 - `TKS.exe逆向分析报告.md`（外层 Armadillo 壳分析——注意区分内/外层）
 
-### 8.3 数据层实现（``）
+### 8.3 数据层实现（`仓库根目录/`）
 - `build/build_all.py`：18 编辑器注册表（`EDITORS`）
 - `editor_utils/lzss.py`（LZSS 三变体）、`rgb565.py`、`jvg_data.py`、`grp_codec.py`、`tkt_loader.py`、`kon_name_resolver.py`、`mod_exporter.py`
 - 各编辑器结构常量：`item_editor_v2.py`、`warpc_editor_v2.py`、`kon_editor_v2.py`、`act_editor_v2.py`、`wardata_editor_v2.py`、`skill_editor_v2.py`
