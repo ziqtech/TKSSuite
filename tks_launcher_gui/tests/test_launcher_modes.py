@@ -334,9 +334,9 @@ class LauncherModeTests(unittest.TestCase):
 
 
 class SharedConfigTests(unittest.TestCase):
-    """GUI 与 Winlator CLI 共用 launcher_config.json 的读写语义。"""
+    """launcher_config.json 的读写语义。"""
 
-    def test_save_preserves_cli_sections_in_shared_config(self):
+    def test_save_preserves_unknown_sections(self):
         with tempfile.TemporaryDirectory() as td:
             path = os.path.join(td, "launcher_config.json")
             with open(path, "w", encoding="utf-8") as handle:
@@ -385,50 +385,6 @@ class SharedConfigTests(unittest.TestCase):
             self.assertEqual(state.mode, "compatible")
             self.assertEqual(state.patches, {"a": True, "b": False})
             self.assertEqual(state.mods, {"m1": False})
-
-    def test_gui_saved_config_is_readable_by_cli_parsers(self):
-        from cli_launcher import (
-            parse_mod_selection, parse_mode, parse_patch_selection,
-        )
-        with tempfile.TemporaryDirectory() as td:
-            path = os.path.join(td, "launcher_config.json")
-            state = GuiState(
-                patches={"summon_table": True, "no_enemy": False},
-                mods={"beauty_pack": True, "map_mod": False},
-                mode="compatible",
-                last_game_path=os.path.join(td, "TKS.exe"),
-            )
-            self.assertTrue(save_gui_state(path, state, state.last_game_path))
-            with open(path, "r", encoding="utf-8") as handle:
-                cfg = json.load(handle)
-
-            self.assertEqual(parse_patch_selection(cfg), {"summon_table"})
-            self.assertEqual(parse_mod_selection(cfg), {"beauty_pack"})
-            self.assertEqual(parse_mode(cfg), "compatible")
-
-    def test_cli_parser_defaults_and_selection_semantics(self):
-        from cli_launcher import (
-            parse_mod_selection, parse_mode, parse_patch_selection,
-        )
-
-        # 字段缺失/为空/仅说明字段 → 默认行为 (补丁默认勾选 / MOD 全部启用)
-        self.assertIsNone(parse_patch_selection({}))
-        self.assertIsNone(parse_mod_selection({}))
-        self.assertIsNone(parse_patch_selection({"patches": {"_说明": "x"}}))
-        self.assertIsNone(parse_mod_selection({"mods": {}}))
-        self.assertEqual(parse_mode({}), "standard")
-        self.assertEqual(parse_mode({"mode": "invalid"}), "standard")
-
-        # 字典格式: true 项启用, 全 false → 显式全部禁用
-        cfg = {"patches": {"a": True, "b": False},
-               "mods": {"m1": True, "m2": False},
-               "mode": "compatible"}
-        self.assertEqual(parse_patch_selection(cfg), {"a"})
-        self.assertEqual(parse_mod_selection(cfg), {"m1"})
-        self.assertEqual(parse_mode(cfg), "compatible")
-        self.assertEqual(
-            parse_patch_selection({"patches": {"a": False}}), set())
-        self.assertEqual(parse_mod_selection({"mods": {"m": False}}), set())
 
 
 if __name__ == "__main__":

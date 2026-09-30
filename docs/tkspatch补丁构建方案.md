@@ -1,5 +1,7 @@
 # TKS 启动器补丁构建方案（精简版）
 
+> ⚠️ **已废弃内容（2026-09-30）**: 文中 CLI 启动器相关部分（`dist/TKSLauncherCLI/`、`cli_launcher.exe` 构建与 `--only TKSLauncherCLI` 示例等）已废弃——TKSLauncherCLI 已从仓库移除, 不再打包与兼容。
+
 **日期**: 2026-08-17  
 **核心理念**: 开发环境为源码目录，构建时打包为 .tkspatch 文件
 

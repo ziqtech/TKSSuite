@@ -25,7 +25,7 @@
 | `TKSFontEditor` | `build/entries/entry_font_editor.py` | `font_editor/font9696_codec.py` | `font_text_rendering.md`、`resource_formats.md` |
 | `TKSBook` | `build/entries/entry_tks_book.py` | `tks_book/tks_book_v2.py` 及 `book_loader.py` 等 | 数据查看器，复用上述加载层 |
 | `TKSLauncher` | `build/entries/entry_launcher.py` | `tks_launcher_gui/main.py`、`core/warpc_expander.py`、`core/patch_engine.py` | `modding_capacity_limits.md`、`save_system_runtime.md` |
-| `TKSLauncherCLI` | `build/entries/entry_launcher_cli.py` | `tks_launcher_gui/cli_launcher.py` | 同上，无 GUI |
+| `TKSLauncherCLI` ~~（已废弃，2026-09-30 停止提供）~~ | ~~`build/entries/entry_launcher_cli.py`~~ | ~~`tks_launcher_gui/cli_launcher.py`~~ | 已从仓库移除 |
 
 ## 2. 实际文件加载结果
 

@@ -29,7 +29,7 @@ from core.memory import (
 
 # SkimFstDlg 模式前 7 字节: A1 14 A5 4F 00 50 E8
 # 见 sub_4084E0 等游戏代码段,用于早期检测"未加密版"是否已就绪。
-# 之前在 4 处硬编码 (patcher_worker / cli_launcher x3),Phase 14 整合时考虑提取。
+# 之前在 4 处硬编码 (patcher_worker x4),Phase 14 整合时考虑提取。
 SKIMFSTDLG_SENTINEL = b'\xA1\x14\xA5\x4F\x00\x50\xE8'
 
 
@@ -170,7 +170,7 @@ class PatcherWorker(QThread):
         # 表现为"cnc-ddraw 没启动"(窗口化/渲染未接管)。逐文件校验大小一致,
         # 不一致则重试复制; 全部一致后再留短暂稳定期。
         self._settle_tool_files(exe_dir, game_dir)
-        # ── 启动游戏 (CREATE_SUSPENDED: GUI 路径, Wine 走 CLI) ──
+        # ── 启动游戏 (CREATE_SUSPENDED) ──
         tks_path = self.exe_path
         self._log(f"\n启动 {tks_path}...")
         try:

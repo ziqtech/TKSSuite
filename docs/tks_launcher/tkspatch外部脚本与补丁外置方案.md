@@ -89,10 +89,9 @@ def apply(ctx):
 
 `tools/pack_tkspatch.py` 可以把旧版散装 JSON 批量转成 ZIP 型 `.tkspatch`。
 
-构建后的 CLI 可用以下命令快速验证补丁加载和脚本可执行性：
+构建后的启动器可用以下命令快速验证补丁加载和脚本可执行性（原 CLI 版命令 `TKSLauncherCLI.exe --verify-patches` 已废弃，2026-09-30 起仅 GUI 版提供；GUI 版无控制台窗口，验证输出见日志文件）：
 
 ```text
-TKSLauncherCLI.exe --verify-patches
 TKSLauncher.exe --verify-patches
 ```
 

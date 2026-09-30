@@ -47,8 +47,7 @@ if "__compiled__" in globals():
 else:
     _LAUNCHER_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# GUI 勾选状态持久化文件路径 — 与 CLI (Winlator 版) 共用同一配置文件,
-# PC 上配置完成后直接复制该文件到 Winlator 游戏目录即可
+# GUI 勾选状态持久化文件路径
 _STATE_PATH = os.path.join(_LAUNCHER_DIR, "launcher_config.json")
 
 
@@ -274,10 +273,8 @@ class MainWindow(QMainWindow):
             "11. 自定义音乐: 覆盖/新增 Sound 目录 BGM, 生成音乐 MOD\n"
             "12. 存档管理: 备份/恢复游戏存档及补丁状态快照\n"
             "13. 主题：菜单栏「主题」任选 4 种主题；工具栏「切换主题」(Ctrl+T) 在深色/浅色主题间快速切换\n\n"
-            "勾选状态会自动保存到 launcher_config.json, 下次启动时自动恢复;\n"
-            "该文件与 Winlator 版 TKSLauncherCLI 共用, 复制到手机游戏目录即可直接使用\n\n"
-            "运行时基于内存补丁引擎 (runtime_patcher) 实现\n"
-            "兼容 Winlator / Wine 环境 (通过 cli_launcher.py)")
+            "勾选状态会自动保存到 launcher_config.json, 下次启动时自动恢复\n\n"
+            "运行时基于内存补丁引擎 (runtime_patcher) 实现")
         dlg = QDialog(self)
         dlg.setWindowTitle("使用说明")
         dlg.resize(680, 520)
@@ -668,8 +665,7 @@ class MainWindow(QMainWindow):
     def _save_state(self, *_):
         """收集所有列表勾选状态并保存到 launcher_config.json (每次勾选变化时自动触发)。
 
-        该文件与 Winlator 版 CLI 共用; 其中的 tks_exe/game/advanced 等
-        CLI 字段在读写时原样保留。
+        未知字段在读写时原样保留。
         """
         state = GuiState(
             patches=self.patch_list.get_patch_states(),

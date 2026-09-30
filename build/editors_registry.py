@@ -10,7 +10,7 @@
   configs_editor/font_editor 是正规包 (有 __init__.py + 子包), 必须用点号路径;
   其他编辑器目录无 __init__.py, 单层模块名 (item_editor) 优先解析到编辑器目录内
   的同名主文件, 根目录同名目录仅作 namespace package 片段兜底。
-- bootstrap: CLI 启动器无 PySide6/PIL 依赖, 关闭 bootstrap 避免解压无用归档。
+- bootstrap: 是否需要运行时 bootstrap (依赖 PySide6/PIL 的编辑器需开启)。
 """
 
 EDITORS = [
@@ -32,5 +32,4 @@ EDITORS = [
     ("TKSFontEditor",        "entry_font_editor.py",        "font_editor.font_editor",       "font_editor",       True),
     ("TKSBook",              "entry_tks_book.py",           "tks_book",                      "tks_book",          True),
     ("TKSLauncher",          "entry_launcher.py",           "main",                          "tks_launcher_gui",  True),
-    ("TKSLauncherCLI",       "entry_launcher_cli.py",       "cli_launcher",                  "tks_launcher_gui",  False),
 ]

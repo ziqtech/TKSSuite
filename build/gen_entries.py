@@ -49,7 +49,7 @@ from {module} import main
 main()
 '''
 
-# 无 bootstrap 的模板 (CLI / 无 PySide6 依赖的入口)
+# 无 bootstrap 的模板 (无 PySide6 依赖的入口)
 TEMPLATE_PLAIN = '''\
 """TKS Editor 薄入口 — 自动生成，请勿手动编辑"""
 import os

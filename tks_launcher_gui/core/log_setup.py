@@ -1,13 +1,12 @@
-"""启动器文件日志 — GUI / CLI 共用, 无 PySide6 依赖。
+"""启动器文件日志 — 无 PySide6 依赖。
 
-只保留单个日志文件: <启动器目录>/logs/launcher_gui.log (CLI 为
-launcher_cli.log), 每次启动清空重写。启动器日志只服务于"最近一次
-启动"的问题排查, 不是服务器日志, 不做历史归档。
+只保留单个日志文件: <启动器目录>/logs/launcher_gui.log, 每次启动清空
+重写。启动器日志只服务于"最近一次启动"的问题排查, 不是服务器日志,
+不做历史归档。
 
-目录解析需区分两种运行环境 (与 main.py / cli_launcher.py 保持一致):
+目录解析需区分两种运行环境 (与 main.py 保持一致):
   打包环境 (Nuitka): sys.argv[0] 即 exe 路径, 取同级目录;
-      GUI 薄 exe 优先复用 editor_utils.runtime_bootstrap.get_app_dir();
-      CLI exe 未打包 editor_utils, 导入失败时回退到 sys.argv[0]。
+      GUI 薄 exe 优先复用 editor_utils.runtime_bootstrap.get_app_dir()。
   开发环境: 以本文件位置推算 (core/ 的上一级即启动器根目录),
       不依赖 os.getcwd() — 玩家/开发者可能从任意目录启动。
 
@@ -39,7 +38,7 @@ def get_launcher_dir() -> str:
             if app_dir:
                 return app_dir
         except Exception:
-            pass  # CLI exe 未包含 editor_utils, 走 argv 回退
+            pass  # 定位失败时走 argv 回退
         return os.path.dirname(os.path.abspath(sys.argv[0]))
     # 开发环境: core/log_setup.py -> core/ -> 启动器根目录
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -59,7 +58,6 @@ def setup_logging(prefix: str = "launcher") -> str:
     """初始化日志文件, 返回日志路径 (失败返回空串)。
 
     固定单文件: <logs>/<prefix>.log, 每次启动清空重写 (mode='w')。
-    prefix: GUI 用 "launcher_gui", CLI 用 "launcher_cli"。
     重复调用幂等, 返回已建立的日志路径。
     """
     global _setup_done
@@ -122,7 +120,7 @@ _last_level = logging.INFO
 
 
 # traceback 续行特征: traceback 常与 [FATAL] 消息分开发送 (见
-# patcher_worker.run / cli_launcher.run), 需按内容特征归为 CRITICAL,
+# patcher_worker.run), 需按内容特征归为 CRITICAL,
 # 否则会降为 INFO 失去检索意义。
 _TB_CONT_MARKERS = (
     "Traceback (most recent call last)",
@@ -150,7 +148,7 @@ def _detect_level(msg: str) -> int:
 def log_line(msg: str) -> None:
     """将一行启动器日志 (原 [INFO]/[ERROR] 等格式) 同步写入日志文件。
 
-    供 patcher_worker._log / cli_launcher._log 等回调式日志复用,
+    供 patcher_worker._log 等回调式日志复用,
     多行内容 (如 traceback) 按行拆分写入;
     级别按 [FATAL]/[ERROR]/[WARN] 标记映射, 无标记默认为 INFO。
     """

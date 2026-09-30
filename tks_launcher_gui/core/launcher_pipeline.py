@@ -1,14 +1,12 @@
-"""启动器核心流水线 — 供 GUI Worker 与 CLI 共用。
+"""启动器核心流水线 — 供 GUI Worker 复用。
 
-Phase 4 引入。从 `patcher_worker._do_run()` 与 `cli_launcher._do_run()` 提取
-共享逻辑, 消除两份 ~700 行的复制粘贴。
+Phase 4 引入。从 `patcher_worker._do_run()` 提取共享逻辑。
 
 设计原则:
 - 纯逻辑, 无 PySide6 依赖
 - 通过回调函数 (log/status/overlay) 解耦 GUI 通知
 - GUI 特有逻辑 (tool 注入、TKS.exe MOD 替换) 留在 worker
-- CLI 特有逻辑 (Wine 检测、--no-X 诊断开关) 留在 cli_launcher
-- 游戏进程拉起 + 子进程检测也留在调用方, 因 GUI/CLI/Wine 三路径行为差异较大
+- 游戏进程拉起 + 子进程检测也留在调用方
 
 调用方契约:
 - 流水线开始前: 调用方应已完成 `Popen(tks_path)` 与目标进程检测

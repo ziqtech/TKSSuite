@@ -1,5 +1,7 @@
 # Winlator 适配方案：TKS Launcher Headless 版
 
+> ⚠️ **已废弃（2026-09-30）**：Winlator 打包与 TKSLauncherCLI 已停止提供（`cli_launcher.py` 及对应构建入口已从仓库移除），本文整体仅作历史记录，不再代表当前支持范围。
+
 ## 1. 背景
 
 > **说明**：本文为 **TKS Launcher 的 Winlator（Wine on Android）无界面移植方案**（工具部署设计），核心在于剥离 PySide6 GUI 依赖，**不涉及游戏二进制逆向**。文中所指补丁（队伍上限、头像修复、WarPC 扩容等）的游戏侧逆向依据均已在 `tks_launcher/` 与 `warpc_editor/` 各专文中对照 `反编译产物` 验证。

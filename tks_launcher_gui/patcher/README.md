@@ -57,9 +57,6 @@ python patcher/migrate_patches.py --src patches_old --dst patches
 # 只构建 GUI 版本启动器
 python build_all.py --only TKSLauncher
 
-# 只构建 CLI 版本启动器
-python build_all.py --only TKSLauncherCLI
-
 # 构建所有项目
 python build_all.py
 ```

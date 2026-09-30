@@ -1,9 +1,7 @@
 """GUI 勾选状态持久化 — 保存/加载启动器各列表的勾选结果
 
-状态文件与 CLI (Winlator 版 TKSLauncherCLI) 共用 launcher_config.json:
-GUI 每次勾选变化时自动更新其中的勾选状态字段, 下次启动时恢复;
-文件中的 tks_exe / game / advanced 等字段供 CLI 使用, GUI 读写时原样保留。
-用户在 PC 上用 GUI 配置完成后, 直接把该文件复制到 Winlator 游戏目录即可。
+状态文件 launcher_config.json: GUI 每次勾选变化时自动更新其中的勾选
+状态字段, 下次启动时恢复; 未知字段在读写时原样保留。
 """
 import json
 import os
@@ -95,8 +93,7 @@ def save_gui_state(path: str, state: GuiState, game_path: str | None = None) -> 
     返回 True 表示保存成功, False 表示失败。
     """
     data = {
-        "_说明": "TKS Launcher 共享配置文件 — GUI 自动生成并更新勾选状态, "
-                 "复制到 Winlator 游戏目录即可供 TKSLauncherCLI 使用",
+        "_说明": "TKS Launcher 配置文件 — GUI 自动生成并更新勾选状态",
         "schema_version": 2,
         "last_game_path": state.last_game_path,
         "mode": state.mode if state.mode in {"standard", "compatible"} else "standard",

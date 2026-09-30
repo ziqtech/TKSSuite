@@ -30,7 +30,6 @@ def ensure_single_instance(app_name: str | None = None):
     实现: Windows 命名互斥量 (ctypes CreateMutexW)。
       - 按编辑器锁定: 同名互斥量仅限制同一程序 (不同编辑器互不影响)
       - 进程退出/崩溃后系统自动释放互斥量, 无死锁残留
-      - Wine (Winlator) 兼容
       - 非 Windows 平台或创建失败时静默放行 (不阻断主流程)
 
     互斥量名默认取自 sys.argv[0] 文件名 (不含扩展名):

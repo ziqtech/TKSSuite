@@ -27,25 +27,20 @@ build_all.py — TKS Editors 一键构建脚本 (Nuitka)
 输出目录:
     dist/TKSEditors/
     ├── TKSItemEditor.exe     (~5-8MB 薄 / ~40-80MB 完整)
-    ├── ...                   (不含 TKSLauncherCLI, 该 exe 仅输出到 Winlator 包)
+    ├── ...
     ├── libs/                 [薄模式] PySide6.lib, QtCore.lib, ...
     ├── configs/
-    └── mods/
-
-    dist/Winlator/            [Winlator 专用, 手机玩家部署包; TKSLauncherCLI 唯一发行位置]
-    ├── TKSLauncherCLI.exe    CLI 启动器 (~5-10MB)
-    ├── launcher_config.json  共享配置模板 (与 GUI 启动器同一文件)
-    ├── patches/              补丁定义
-    ├── configs/              基线配置 (font_config/summon_table 等)
-    └── mods/                 空目录 (用户放置 MOD)
+    ├── mods/
+    └── 清除缓存.bat          缓存清理工具 (运行缓存/注册表设置)
 
     dist/TKSLauncher/         [玩家精简包, 供不编辑 MOD 的普通玩家使用]
-    ├── TKSLauncher.exe       GUI 启动器 (不含 TKSLauncherCLI, 防止启动错)
+    ├── TKSLauncher.exe       GUI 启动器
     ├── TKSConfigsEditor.exe  配置编辑器
     ├── TKSSaveEditor.exe     存档编辑器
     ├── libs/                 运行时归档 (薄 exe 依赖)
     ├── configs/  mods/  tools/
-    ├── launcher_config.json  共享配置模板 (GUI 配置后可直接复制到 Winlator)
+    ├── launcher_config.json  配置模板
+    └── 清除缓存.bat          缓存清理工具 (运行缓存/注册表设置)
 """
 import argparse
 import hashlib
@@ -107,14 +102,10 @@ BUILD_DIR = Path(__file__).parent                      # build/
 仓库根目录 = BUILD_DIR.parent                         # 
 DIST_DIR = 仓库根目录 / "dist"
 RELEASE_DIR = DIST_DIR / "TKSEditors"
-WINLATOR_DIR = DIST_DIR / "Winlator"
 # 玩家精简包目录 (TKSEditors 子集: 启动器 + 配置/存档编辑器, 供不编辑 MOD 的玩家)
 LAUNCHER_DIR = DIST_DIR / "TKSLauncher"
 # 玩家精简包包含的 exe (必须是 EDITORS 中的打包名)
 LAUNCHER_PACKAGE_EXES = ["TKSLauncher", "TKSConfigsEditor", "TKSSaveEditor", "TKSBook"]
-# Winlator 专属 exe: 只输出到 dist/Winlator/, 不进入 TKSEditors 完整包与
-# TKSLauncher 精简包, 防止 PC 用户误启动 CLI 版本。
-WINLATOR_ONLY_EXES = {"TKSLauncherCLI"}
 # .lib 归档统一存放于 libs/ 子目录, 与 exe 分离
 LIBS_DIR = RELEASE_DIR / "libs"
 # Nuitka C 编译缓存 (其下含 clcache); 固定到仓库内, 避免依赖外部环境变量丢失缓存
@@ -190,8 +181,6 @@ def _version_flags(name: str, editor_dir: str) -> list:
         ev = get_version(app_id)
         version = ev.version
         description = ev.app_name
-        if name == "TKSLauncherCLI":
-            description += " (命令行版)"
     except Exception:
         pass  # 版本表读取失败不阻断构建, 用默认值
 
@@ -234,7 +223,7 @@ def _nuitka_common(name: str, entry: str, editor_dir: str,
         # ── 输出控制 ──
         f"--output-dir={DIST_DIR}",
         f"--output-filename={name}.exe",
-        # thin/onefile 禁控制台; CLI (force) 需要控制台输出
+        # thin/onefile 均禁用控制台窗口
         f"--windows-console-mode={console_mode}",
         f"--windows-icon-from-ico={icon_path}",
     ]
@@ -251,7 +240,7 @@ def _nuitka_optimize(release: bool, jobs: int) -> list:
     ]
 
 
-#: thin/onefile 共享的无用模块排除清单 (cli 用其前 6 项)
+#: thin/onefile 共享的无用模块排除清单
 _NOFOLLOW_COMMON = ["tkinter", "matplotlib", "numpy",
                     "scipy", "pytest", "IPython", "unittest"]
 
@@ -356,8 +345,7 @@ def _build_onefile_cmd(name: str, entry: str, editor_dir: str,
     #   · mat/act/warpc/wardata/tkt/jvg/grp/gxp/spritesheet/font 直接 import PIL
     #   · item/skill/shop/kon/save/configs 经共享工具 editor_utils.jvg_loader 间接依赖
     #   · GUI 启动器经 ui.custom_avatar_dialog 依赖
-    # 本函数不用于 CLI 启动器 (CLI 走 _build_cli_cmd), 故无条件包含 PIL,
-    # 确保 Pillow 惰性加载的图像插件与 _imaging 扩展被完整打包。
+    # 无条件包含 PIL, 确保 Pillow 惰性加载的图像插件与 _imaging 扩展被完整打包。
     cmd.append("--include-package=PIL")
 
     # zhconv 数据文件 (zhcdict.json) — 运行时按需加载, Nuitka 不会自动打包
@@ -367,44 +355,6 @@ def _build_onefile_cmd(name: str, entry: str, editor_dir: str,
     # 入口脚本 (必须是最后一个参数)
     cmd.append(str(entry_path))
 
-    return cmd
-
-
-def _build_cli_cmd(name: str, entry: str, editor_dir: str,
-                   release: bool = False, jobs: int = 8) -> list:
-    """生成 CLI 启动器 Nuitka 构建命令 (无 PySide6, 无 Qt, 极简 exe)"""
-    cmd, entry_path, _icon_path = _nuitka_common(name, entry, editor_dir,
-                                                 console_mode="force")
-
-    tks_launcher_dir = 仓库根目录 / "tks_launcher_gui"
-
-    cmd.extend([
-        # 排除所有 GUI 框架 (避免 Nuitka 追踪到 PySide6)
-        "--nofollow-import-to=PySide6",
-        "--nofollow-import-to=shiboken6",
-        "--nofollow-import-to=PIL",
-        *[f"--nofollow-import-to={m}" for m in _NOFOLLOW_COMMON[:3]],
-
-        # 禁用排除模块的隐式导入检测
-        "--no-deployment-flag=excluded-module-usage",
-
-        # 包含 core 包 (Nuitka 不会自动发现)
-        # cli_launcher.py 以裸包名 `from core...` 导入, 且 tks_launcher_gui 无 __init__.py,
-        # 故用顶层包名 core (与运行时 sys.path 上的导入路径一致), 而非 tks_launcher_gui.core。
-        "--include-package=core",
-
-        # 包含数据文件 (补丁配置; patches/ 目录由发行组装复制到 exe 同级)
-        f"--include-data-files={仓库根目录 / 'configs' / 'summon_table.json'}=configs/summon_table.json",
-    ])
-
-    cmd.extend(_nuitka_optimize(release, jobs))
-
-    cmd.append("--remove-output")
-
-    # ── 版本资源 (降低杀毒误报) ──
-    cmd.extend(_version_flags(name, editor_dir))
-
-    cmd.append(str(entry_path))
     return cmd
 
 
@@ -449,10 +399,6 @@ def _validate_editor_registry() -> None:
     unknown_zhconv = NEEDS_ZHCONV.difference(names)
     if unknown_zhconv:
         missing.append(f"NEEDS_ZHCONV 包含未注册编辑器: {sorted(unknown_zhconv)}")
-    cli_in_launcher = WINLATOR_ONLY_EXES.intersection(LAUNCHER_PACKAGE_EXES)
-    if cli_in_launcher:
-        missing.append(
-            f"LAUNCHER_PACKAGE_EXES 不应包含 Winlator 专属 exe: {sorted(cli_in_launcher)}")
     if missing:
         raise RuntimeError("构建注册表校验失败:\n  " + "\n  ".join(missing))
 
@@ -631,6 +577,21 @@ def _copy_release_notes(destination: Path) -> bool:
         return False
 
 
+def _copy_cache_cleaner(destination: Path) -> bool:
+    """复制根目录的 清除缓存.bat 到发行目录 (清理运行缓存与注册表设置)。"""
+    source = 仓库根目录 / "清除缓存.bat"
+    if not source.is_file():
+        print(f"  [WARN] 清除缓存脚本不存在: {source}")
+        return False
+    try:
+        destination.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(str(source), str(destination / source.name))
+        return True
+    except OSError as exc:
+        print(f"  [WARN] 清除缓存脚本复制失败: {exc}")
+        return False
+
+
 def _build_release_patches(destination: Path) -> bool:
     """将补丁源码构建为发行版 .tkspatch 文件。"""
     patches_src = 仓库根目录 / "tks_launcher_gui" / "patches"
@@ -678,10 +639,8 @@ def _should_skip_build(name: str, source_files: list) -> bool:
 
     以发行目录 (RELEASE_DIR) 的 exe 作为增量标记 — 构建产物在 assemble
     阶段会从 dist/ 根目录移入发行目录, dist/ 根目录不再保留中间 exe。
-    Winlator 专属 exe 的最终位置在 WINLATOR_DIR, 以其作为增量标记。
     """
-    marker_dir = WINLATOR_DIR if name in WINLATOR_ONLY_EXES else RELEASE_DIR
-    exe_path = marker_dir / f"{name}.exe"
+    exe_path = RELEASE_DIR / f"{name}.exe"
     if not exe_path.exists():
         return False
     exe_mtime = exe_path.stat().st_mtime
@@ -707,7 +666,7 @@ def build_one(name: str, entry: str, editor_dir: str,
 
     返回 (success: bool, elapsed: float)
     """
-    if not onefile and name != "TKSLauncherCLI":
+    if not onefile:
         _validate_runtime_archives()
     # 增量构建检查
     if not force:
@@ -716,11 +675,7 @@ def build_one(name: str, entry: str, editor_dir: str,
             print(f"  [SKIP] {name} (源文件未变更)")
             return True, 0.0
 
-    # CLI 启动器使用专用构建 (无 PySide6)
-    is_cli = (name == "TKSLauncherCLI")
-    if is_cli:
-        mode_label = "CLI 极简 (无 PySide6/Qt)"
-    elif onefile:
+    if onefile:
         mode_label = "完整 onefile (PySide6/PIL 内嵌)"
     else:
         mode_label = "薄 exe (无 PySide6/PIL)"
@@ -733,9 +688,7 @@ def build_one(name: str, entry: str, editor_dir: str,
     print(f"  模式: Nuitka --onefile ({mode_label}, {lto_label}, jobs={jobs})")
     print(f"{'='*60}")
 
-    if is_cli:
-        cmd = _build_cli_cmd(name, entry, editor_dir, release, jobs)
-    elif onefile:
+    if onefile:
         cmd = _build_onefile_cmd(name, entry, editor_dir, release, jobs)
     else:
         cmd = _build_thin_cmd(name, entry, editor_dir, release, jobs)
@@ -892,19 +845,8 @@ def assemble_release(onefile: bool = False, release: bool = False,
 
     RELEASE_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Winlator 专属 exe 不进入 TKSEditors 完整包; 清理旧版本遗留
-    for name in sorted(WINLATOR_ONLY_EXES):
-        stale = RELEASE_DIR / f"{name}.exe"
-        if stale.exists():
-            stale.unlink()
-            print(f"  [清理] 移除旧版 {name}.exe (Winlator 专属, 仅输出到 dist/Winlator)")
-
     assembled = 0
     for name, _, _ in EDITORS:
-        if name in WINLATOR_ONLY_EXES:
-            # CLI 启动器由 assemble_winlator() 单独组装, 不出现在 TKSEditors
-            print(f"  [WINLATOR] {name}.exe 仅输出到 Winlator 部署包")
-            continue
         exe_src = DIST_DIR / f"{name}.exe"
         exe_dst = RELEASE_DIR / f"{name}.exe"
         if exe_src.exists():
@@ -943,7 +885,7 @@ def assemble_release(onefile: bool = False, release: bool = False,
     else:
         print("  [WARN] 补丁构建失败，但不影响启动器运行")
 
-    # 复制 launcher_config.json (GUI/CLI 共享配置模板)
+    # 复制 launcher_config.json (配置模板)
     launcher_cfg_src = 仓库根目录 / "tks_launcher_gui" / "launcher_config.json"
     if launcher_cfg_src.exists():
         shutil.copy2(str(launcher_cfg_src), str(RELEASE_DIR / "launcher_config.json"))
@@ -958,6 +900,9 @@ def assemble_release(onefile: bool = False, release: bool = False,
 
     if _copy_release_notes(RELEASE_DIR):
         print("  [OK] 更新记录.txt")
+
+    if _copy_cache_cleaner(RELEASE_DIR):
+        print("  [OK] 清除缓存.bat")
 
     # summon_table.json 已由上方 configs/*.json glob 复制到 RELEASE_DIR/configs/
 
@@ -978,90 +923,6 @@ def assemble_release(onefile: bool = False, release: bool = False,
 
     # 生成构建信息
     _generate_build_info(onefile, release, success or [], failed or [])
-
-
-def assemble_winlator():
-    """组装 Winlator 发行目录 (CLI 启动器 + 必要配置)
-
-    此目录专为 Winlator (Wine on Android) 用户设计，包含:
-    - TKSLauncherCLI.exe    无 GUI 的命令行启动器 (唯一发行位置)
-    - launcher_config.json  共享配置模板 (与 PC 版 GUI 启动器同一文件)
-    - patches/              补丁定义
-    - configs/summon_table.json  召唤表
-    - mods/                 MOD 目录 (空, 供用户放置)
-    """
-    print(f"\n{'='*60}")
-    print(f"  组装 Winlator 发行目录: {WINLATOR_DIR}")
-    print(f"{'='*60}")
-
-    # CLI exe 来源: 本次构建产物 (dist/ 根目录); 增量跳过时沿用
-    # Winlator 目录中的现有副本 (须在清空目录前抢救出来)
-    cli_src = DIST_DIR / "TKSLauncherCLI.exe"
-    if not cli_src.exists():
-        old_cli = WINLATOR_DIR / "TKSLauncherCLI.exe"
-        if old_cli.exists():
-            shutil.copy2(str(old_cli), str(cli_src))
-
-    # 清空并重建 Winlator 目录 (确保干净)
-    if WINLATOR_DIR.exists():
-        shutil.rmtree(str(WINLATOR_DIR))
-    WINLATOR_DIR.mkdir(parents=True, exist_ok=True)
-
-    assembled = []
-
-    # 1. 复制 TKSLauncherCLI.exe
-    if cli_src.exists():
-        shutil.copy2(str(cli_src), str(WINLATOR_DIR / "TKSLauncherCLI.exe"))
-        size_mb = cli_src.stat().st_size / (1024 * 1024)
-        print(f"  [OK] TKSLauncherCLI.exe ({size_mb:.1f} MB)")
-        assembled.append("TKSLauncherCLI.exe")
-        # 最终产物已在 Winlator 目录; 清理 dist 根目录中间副本 (增量标记
-        # 以 WINLATOR_DIR 为准, 无需保留)
-        if cli_src != WINLATOR_DIR / "TKSLauncherCLI.exe":
-            cli_src.unlink()
-    else:
-        print(f"  [WARN] TKSLauncherCLI.exe 不存在 (未构建或构建失败)")
-
-    # 2. 复制 launcher_config.json (配置模板)
-    launcher_cfg_src = 仓库根目录 / "tks_launcher_gui" / "launcher_config.json"
-    if launcher_cfg_src.exists():
-        shutil.copy2(str(launcher_cfg_src), str(WINLATOR_DIR / "launcher_config.json"))
-        print(f"  [OK] launcher_config.json")
-        assembled.append("launcher_config.json")
-
-    # 3. 复制外置补丁目录 (CLI 同样使用 patches/ 的 ZIP 型 .tkspatch 作为唯一来源)
-    if _copy_built_patches(WINLATOR_DIR / "patches"):
-        patch_count = len(list((WINLATOR_DIR / "patches").glob("*.tkspatch")))
-        print(f"  [OK] patches/ ({patch_count} 个 .tkspatch)")
-        assembled.append("patches/")
-
-    # 4. 复制全部基线配置 (configs/, 与发行目录一致)
-    configs_dst = WINLATOR_DIR / "configs"
-    configs_dst.mkdir(exist_ok=True)
-    src_configs = 仓库根目录 / "configs"
-    if src_configs.exists():
-        for f in src_configs.glob("*.json"):
-            shutil.copy2(str(f), str(configs_dst / f.name))
-        print(f"  [OK] configs/")
-        assembled.append("configs/")
-
-    if _copy_release_notes(WINLATOR_DIR):
-        print("  [OK] 更新记录.txt")
-        assembled.append("更新记录.txt")
-
-    # 5. 创建空 mods/ 目录 (供用户放置 MOD 文件)
-    mods_dst = WINLATOR_DIR / "mods"
-    mods_dst.mkdir(exist_ok=True)
-    print(f"  [OK] mods/ (空目录, 供用户放置 .tksmod/.tksmodpak)")
-
-    # 汇总
-    total_size = sum(
-        f.stat().st_size for f in WINLATOR_DIR.rglob("*")
-        if f.is_file()
-    )
-    print(f"\n  Winlator 组装完成: {len(assembled)} 个文件")
-    print(f"  总大小: {total_size / (1024*1024):.1f} MB")
-    print(f"  目录: {WINLATOR_DIR}")
 
 
 def assemble_launcher():
@@ -1131,8 +992,11 @@ def assemble_launcher():
         print("  [OK] 更新记录.txt")
         assembled.append("更新记录.txt")
 
-    # 5. 复制启动器共享配置模板 (与 CLI/Winlator 包同一文件,
-    #    玩家配置完成后可直接复制到 Winlator 游戏目录)
+    if _copy_cache_cleaner(LAUNCHER_DIR):
+        print("  [OK] 清除缓存.bat")
+        assembled.append("清除缓存.bat")
+
+    # 5. 复制启动器配置模板
     for fname in ("launcher_config.json",):
         src = 仓库根目录 / "tks_launcher_gui" / fname
         if src.exists():
@@ -1245,8 +1109,7 @@ def main():
     if args.list:
         print("可构建编辑器:")
         for name, entry, _ in EDITORS:
-            tag = " [CLI, 仅 Winlator 包]" if name in WINLATOR_ONLY_EXES else ""
-            print(f"  {name:<24} {entry}{tag}")
+            print(f"  {name:<24} {entry}")
         return
 
     if args.onefile and (args.runtime or args.all):
@@ -1317,8 +1180,6 @@ def main():
     # 组装
     if not args.no_assemble and success:
         assemble_release(args.onefile, args.release, success, failed)
-        # 额外输出 Winlator 目录 (CLI 启动器 + 必要配置)
-        assemble_winlator()
         # 额外输出 TKSLauncher 玩家精简包 (启动器 + 配置/存档编辑器)
         assemble_launcher()
 

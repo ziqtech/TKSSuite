@@ -30,17 +30,7 @@ from editor_utils.lzss import (
 )
 
 # GRP 图层差分编解码 (与编辑器共用同一实现, 保证字节一致)
-try:
-    from editor_utils import grp_codec as _grp_codec
-except ImportError:  # 兼容 cli_launcher 只把自身目录加入 sys.path 的情况
-    import sys as _sys
-    _ai_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    if _ai_root not in _sys.path:
-        _sys.path.insert(0, _ai_root)
-    try:
-        from editor_utils import grp_codec as _grp_codec
-    except ImportError:
-        _grp_codec = None
+from editor_utils import grp_codec as _grp_codec
 
 
 # ═══════════════════════════════════════════════════════════════
