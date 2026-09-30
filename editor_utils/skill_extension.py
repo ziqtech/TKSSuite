@@ -499,9 +499,14 @@ def migrate_skill_extension(extension: Optional[SkillExtension], *,
 def migrate_for_original_game(extension: Optional[SkillExtension], *,
                               actor_count: int,
                               skill_count: int,
-                              mapping_version: int = GAME_MAPPING_VERSION
+                              mapping_version: int = GAME_MAPPING_VERSION,
+                              fill_default_states: bool = True
                               ) -> SkillExtension:
-    """Migrate to the fixed capacities used by the original-game patch."""
+    """Migrate to the fixed capacities used by the original-game patch.
+
+    fill_default_states=False (WarPC 模板编辑) 时, 新增角色/技能列不填
+    游戏内置默认值 (等待学 1), 保持 0 (不会), 未配置即不参与学习。
+    """
     if actor_count > GAME_ACTOR_CAPACITY:
         raise SkillExtensionFormatError(
             f"current character table has {actor_count} rows; "
@@ -536,6 +541,7 @@ def migrate_for_original_game(extension: Optional[SkillExtension], *,
             actor_count=actor_count,
             skill_count=registered,
             mapping_version=mapping_version,
+            apply_defaults=fill_default_states,
         )
 
     migrated = migrate_skill_extension(
@@ -546,6 +552,8 @@ def migrate_for_original_game(extension: Optional[SkillExtension], *,
         mod_id=None,
         mapping_version=mapping_version,
     )
+    if not fill_default_states:
+        return migrated
     template = create_original_game_extension(
         actor_count=GAME_ACTOR_CAPACITY,
         skill_count=registered,

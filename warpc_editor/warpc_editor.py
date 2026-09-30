@@ -57,6 +57,7 @@ import json
 import os
 import struct
 import sys
+import tempfile
 from pathlib import Path
 from functools import partial
 from PySide6.QtWidgets import (
@@ -2010,11 +2011,13 @@ class WarpcEditorV2(EditorMainWindow):
                         actor_count=len(records),
                         skill_count=skill_count,
                         mapping_version=1,
+                        fill_default_states=False,
                     )
                 elif skill_count > 0:
                     extension = create_original_game_extension(
                         actor_count=len(records),
                         skill_count=skill_count,
+                        apply_defaults=False,
                     )
                 else:
                     extension = None
@@ -3728,7 +3731,7 @@ class WarpcEditorV2(EditorMainWindow):
                 self._draft_skill_extension = \
                     self._draft_skill_extension.with_actor_learn_bytes(
                         new_idx,
-                        bytes([1]) *
+                        bytes([0]) *
                         self._draft_skill_extension.skill_count,
                     ).clear_actor_overrides(new_idx)
             self._dirty = True
@@ -3831,6 +3834,33 @@ class WarpcEditorV2(EditorMainWindow):
     def _on_save_error(self, err_msg):
         QMessageBox.critical(self, "保存失败", err_msg)
 
+    # ── 扩展技能 (.tksx) MOD 携带 ──
+    def _collect_tksx_resource(self):
+        """导出 MOD 时把扩展技能配置作为资源整文件携带 (WarPC.dat.tksx)。
+
+        扩展技能学习状态不存在 WarPC.dat 记录里, 不随差异 JSON 导出;
+        若不打包, 玩家端应用 MOD 后这部分修改会静默丢失。
+        返回 (resources, resource_files, tmp_path); 未加载扩展配置时全部为空,
+        tmp_path 为临时文件, 打包结束后由 _discard_tksx_tmp 清理。
+        """
+        extension = getattr(self, '_skill_extension', None)
+        if extension is None:
+            return [], {}, None
+        internal = "resources/WarPC.dat.tksx"
+        fd, tmp_path = tempfile.mkstemp(suffix=".tksx", prefix="tksmod_")
+        with os.fdopen(fd, "wb") as f:
+            f.write(extension.to_bytes())
+        return ([{"file": internal, "target": "WarPC.dat.tksx"}],
+                {internal: tmp_path}, tmp_path)
+
+    @staticmethod
+    def _discard_tksx_tmp(tmp_path):
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
     def _export_tksmod(self):
         """导出当前修改为 .tksmod MOD 文件"""
         if not self.records or not self._original_records:
@@ -3891,28 +3921,38 @@ class WarpcEditorV2(EditorMainWindow):
         # 组件列表
         components = [{"file": "data/WarPC.dat.json", "target": "WarPC.dat"}]
 
+        # 扩展技能配置随 MOD 携带 (资源整文件替换)
+        resources, resource_files, tmp_tksx = self._collect_tksx_resource()
+
         # 生成 mod.json
-        mod_json = generate_mod_json(metadata, components)
+        mod_json = generate_mod_json(metadata, components, resources=resources)
 
         # 选择保存路径
         default_name = f"{safe_mod_filename(metadata['name'], metadata['id'])}.tksmod"
         fp, _ = QFileDialog.getSaveFileName(
             self, "导出为 MOD", default_name, "TKS MOD (*.tksmod)")
         if not fp:
+            self._discard_tksx_tmp(tmp_tksx)
             return
 
         # 打包
         data_files = {"data/WarPC.dat.json": data_json}
         try:
-            pack_tksmod(fp, mod_json, data_files)
+            pack_tksmod(fp, mod_json, data_files,
+                        resource_files=resource_files or None)
             n_mod = len(diff_result['modified'])
             n_app = len(diff_result['appended'])
-            self.status_var.setText(f"已导出 MOD: {os.path.basename(fp)} (修改{n_mod}条, 追加{n_app}条)")
+            tksx_note = ", 已含扩展技能配置" if resources else ""
+            self.status_var.setText(
+                f"已导出 MOD: {os.path.basename(fp)} (修改{n_mod}条, 追加{n_app}条{tksx_note})")
+            tksx_line = "\n扩展技能配置: 已携带 (WarPC.dat.tksx)" if resources else ""
             QMessageBox.information(self, "导出成功",
                 f"已导出 MOD 文件:\n{fp}\n\n"
-                f"修改记录: {n_mod} 条\n追加记录: {n_app} 条")
+                f"修改记录: {n_mod} 条\n追加记录: {n_app} 条{tksx_line}")
         except Exception as e:
             QMessageBox.critical(self, "导出失败", str(e))
+        finally:
+            self._discard_tksx_tmp(tmp_tksx)
 
     def _export_tksmod_with_ref(self):
         """导出 MOD — 指定原始参考目录进行差异比对（适用于当前文件已被修改的情况）"""
@@ -3977,18 +4017,29 @@ class WarpcEditorV2(EditorMainWindow):
         metadata["id_ranges"] = id_ranges
         metadata["warpc_expand"] = warpc_expand
 
-        mod_json = generate_mod_json(metadata, [{"file": "data/WarPC.dat.json", "target": "WarPC.dat"}])
+        # 扩展技能配置随 MOD 携带 (资源整文件替换)
+        resources, resource_files, tmp_tksx = self._collect_tksx_resource()
+
+        mod_json = generate_mod_json(metadata,
+            [{"file": "data/WarPC.dat.json", "target": "WarPC.dat"}],
+            resources=resources)
         fp, _ = QFileDialog.getSaveFileName(self, "导出为 MOD", f"{safe_mod_filename(metadata['name'], metadata['id'])}.tksmod", "TKS MOD (*.tksmod)")
-        if not fp: return
+        if not fp:
+            self._discard_tksx_tmp(tmp_tksx)
+            return
         try:
-            pack_tksmod(fp, mod_json, {"data/WarPC.dat.json": data_json})
+            pack_tksmod(fp, mod_json, {"data/WarPC.dat.json": data_json},
+                        resource_files=resource_files or None)
             n_mod = len(diff_result['modified'])
             n_app = len(diff_result['appended'])
+            tksx_line = "\n扩展技能配置: 已携带 (WarPC.dat.tksx)" if resources else ""
             self.status_var.setText(f"已导出 MOD: {os.path.basename(fp)} (参考目录比对, 修改{n_mod}, 追加{n_app})")
             QMessageBox.information(self, "导出成功",
-                f"已导出 (参考目录模式):\n{fp}\n\n参考: {ref_dir}\n修改: {n_mod} 条\n追加: {n_app} 条")
+                f"已导出 (参考目录模式):\n{fp}\n\n参考: {ref_dir}\n修改: {n_mod} 条\n追加: {n_app} 条{tksx_line}")
         except Exception as e:
             QMessageBox.critical(self, "导出失败", str(e))
+        finally:
+            self._discard_tksx_tmp(tmp_tksx)
 
     def _import_tksmod(self):
         """从 .tksmod 导入 MOD 数据到编辑器"""
