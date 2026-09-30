@@ -26,7 +26,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 LAUNCHER = ROOT / "tks_launcher_gui"
 PATCH_DIR = LAUNCHER / "patches" / "tkitem_expand"
-GAME_DIR = Path(os.environ.get("TKS_GAME_DIR", r"游戏目录（原版）"))
+GAME_DIR = Path(os.environ.get("TKS_GAME_DIR", "."))
 for _p in (str(ROOT), str(LAUNCHER), str(PATCH_DIR)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
@@ -586,7 +586,7 @@ class RealJvgFrameMappingTests(unittest.TestCase):
                              "状态 %d 必须与原版 Mu2 逐像素一致" % status_id)
 
 
-MOD_DIR = Path(os.environ.get("TKS_MOD_DIR", r"游戏目录（改版）"))
+MOD_DIR = Path(os.environ.get("TKS_MOD_DIR", "."))
 
 
 @unittest.skipUnless((MOD_DIR / "Mu.JVG").is_file(),

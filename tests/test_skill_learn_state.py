@@ -1,4 +1,5 @@
 import json
+import os
 import struct
 import sys
 import tempfile
@@ -46,7 +47,7 @@ from editor_utils.skill_extension import (  # noqa: E402
 
 
 PATCH_JSON = LAUNCHER / "patches" / "skill_ext_learn_state" / "patch.json"
-GAME_DIR = Path(r"游戏目录（原版）")
+GAME_DIR = Path(os.environ.get("TKS_GAME_DIR", "."))
 
 CAVE = 0x00400000
 EXT = 0x00660000

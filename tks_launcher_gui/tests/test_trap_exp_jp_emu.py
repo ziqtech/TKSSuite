@@ -16,6 +16,7 @@
   6 trap_e100    陷阱且 byte_9DF760=100 (原版门槛本就放行的边界) → 与场景3一致
 """
 import json
+import os
 import re
 import struct
 import sys
@@ -26,7 +27,7 @@ from unicorn import Uc, UC_ARCH_X86, UC_MODE_32, UC_HOOK_CODE
 from unicorn.x86_const import (UC_X86_REG_EAX, UC_X86_REG_EBP, UC_X86_REG_ECX,
                                UC_X86_REG_ESP, UC_X86_REG_EIP)
 
-DUMP = r"反编译产物/memory\00401000--00481000.txt"
+DUMP = os.environ.get("TKS_MEM_DUMP", "")   # 反汇编内存转储 (00401000--00481000)
 TEXT_BASE, TEXT_SIZE = 0x401000, 0x481000 - 0x401000
 CAVE_BASE = 0x70000000
 STACK = 0x7FF00000
@@ -87,15 +88,17 @@ def install_hook(code: bytearray, hook_va: int, cave_va: int, size: int):
 
 
 def cave_bytes_from_patch(patch_dir: str) -> bytes:
-    with open(patch_dir + r"\patch.json", encoding="utf-8") as f:
+    with open(os.path.join(patch_dir, "patch.json"), encoding="utf-8") as f:
         cc = json.load(f)["cave_code"]
     return bytes.fromhex(cc.replace(" ", ""))
 
 
+_PATCHES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "patches")
+
 try:
-    CAVE_GATE = cave_bytes_from_patch(r"tks_launcher_gui\patches\trap_exp_jp_kill_fix")
-    CAVE_PERSONAL = cave_bytes_from_patch(r"tks_launcher_gui\patches\trap_exp_jp_personal_fix")
-    CAVE_SUMMON = cave_bytes_from_patch(r"tks_launcher_gui\patches\summon_exp_jp_accumulation_fix")
+    CAVE_GATE = cave_bytes_from_patch(os.path.join(_PATCHES, "trap_exp_jp_kill_fix"))
+    CAVE_PERSONAL = cave_bytes_from_patch(os.path.join(_PATCHES, "trap_exp_jp_personal_fix"))
+    CAVE_SUMMON = cave_bytes_from_patch(os.path.join(_PATCHES, "summon_exp_jp_accumulation_fix"))
 except (FileNotFoundError, KeyError, OSError):
     CAVE_GATE = CAVE_PERSONAL = CAVE_SUMMON = None
 
@@ -197,6 +200,9 @@ def expect(name, got, **exp):
 
 
 def main():
+    if not DUMP or not os.path.isfile(DUMP):
+        print("SKIP: 需要设置 TKS_MEM_DUMP 指向反汇编内存转储文件")
+        return 0
     if CAVE_GATE is None:
         print("SKIP: patch cave source is not available")
         return 0

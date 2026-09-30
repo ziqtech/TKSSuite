@@ -38,7 +38,7 @@ from editor_utils.lzss import (  # noqa: E402
 )
 
 
-GAME_DIR = Path(os.environ.get("TKS_GAME_DIR", r"游戏目录（原版）"))
+GAME_DIR = Path(os.environ.get("TKS_GAME_DIR", "."))
 
 
 def tkitem_table_operation(game_dir):

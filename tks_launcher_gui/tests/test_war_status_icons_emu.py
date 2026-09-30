@@ -25,6 +25,7 @@ v7.8 新增验证:
 - 尾部双路径: edx=0 (有效面板状态) → ret 落回 E8 返回地址原值;
   edx=0xFFFFFFFF (word_9D6C88=-1, 无菜单的 default 路径) → ret 落回
   返回地址+0x112 (0x43A7AB→0x43A8BD), 且两路径栈均平衡 (esp 恢复)。"""
+import os
 import struct
 import sys
 
@@ -44,6 +45,7 @@ A_MU2, A_FBASE = 0x755AF4, 0x9D6F76
 A_GRID = 0x951D42
 A_WIDTH = 0x4E7CC8       # 视口/画布宽 (原版 640, 16:9 宽屏补丁 856)
 TOTAL_FRAMES = 107   # Mu2.JVG 总帧数 (obj+0x18)
+MU2_JVG = os.environ.get("TKS_MU2_JVG", "")   # 原版 Mu2.JVG 路径
 
 
 def run_frame(frame_idx: int, slots: dict | tuple = (0,), *, width: int = 640,
@@ -66,7 +68,7 @@ def run_frame(frame_idx: int, slots: dict | tuple = (0,), *, width: int = 640,
     code = bytes(cave_bytes())
     uc.mem_write(CAVE, code)
 
-    d = open(r"逆向工作区/Mu2.JVG", "rb").read()
+    d = open(MU2_JVG, "rb").read()
     # 解析全部块 → loader (sub_453BD0) 等价对象结构
     obj = SCRATCH + 0x0
     records = SCRATCH + 0x1000
@@ -196,6 +198,9 @@ def run_tail(edx_val: int, ret_addr: int, stop_addr: int) -> int:
 
 
 def main() -> bool:
+    if not MU2_JVG:
+        print("SKIP: 需要设置 TKS_MU2_JVG 指向原版 Mu2.JVG")
+        return True
     ok = True
     # v7.9 几何: 30x30 图标, 2 行 × 4 槽 (从下往上):
     #   ytop = sy-194 (行2/顶行), 行1(底行) y = ytop+31 = sy-163

@@ -64,7 +64,7 @@ LEARN_END = 259        # 技能学习 结束 int16 字段索引 (含)
 TKSKILL_REC = 94       # TKSkill.dat 每条字节数
 TKSKILL_MAX = 350      # TKSkill 最大条目数
 TKSKILL_TYPE_OFF = 4   # 技能类型 int16 字节偏移 (与 _load_skill_names 一致)
-DEFAULT_WARPC = r"游戏目录/WarPC.dat"
+DEFAULT_WARPC = os.path.join(os.environ.get("TKS_GAME_DIR", "."), "WarPC.dat")
 
 LEARN_STATE_NAMES = {0: "不会", 10: "可以学", 20: "组技能学会", 30: "子技能学会"}
 

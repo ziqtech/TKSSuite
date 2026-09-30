@@ -19,7 +19,7 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 ROOT = Path(__file__).resolve().parents[2]
-GAME_DIR = Path(os.environ.get("TKS_GAME_DIR", r"游戏目录（原版）"))
+GAME_DIR = Path(os.environ.get("TKS_GAME_DIR", "."))
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 if str(ROOT / "tks_launcher_gui") not in sys.path:

@@ -82,7 +82,6 @@ SKILL_COLOR_VOCAB = {COLOR_DMG_HP, 0x17, COLOR_HEAL_HP, COLOR_HEAL_MP,
 
 _EXE_CANDIDATES = (
     os.environ.get("TKS_VANILLA_EXE", ""),
-    r"游戏目录（原版）/TKS.exe",
 )
 
 

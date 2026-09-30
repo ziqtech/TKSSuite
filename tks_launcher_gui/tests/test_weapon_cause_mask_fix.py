@@ -79,7 +79,6 @@ PAT_READ_UNIT_CAUSE_LO = "66 8B 14 45 00 71 9D 00"
 
 _EXE_CANDIDATES = (
     os.environ.get("TKS_VANILLA_EXE", ""),
-    r"游戏目录（原版）/TKS.exe",
 )
 
 

@@ -35,7 +35,7 @@ from editor_utils.lzss import (  # noqa: E402
 from ui.generate_exe_dialog import GenerateExeDialog  # noqa: E402
 
 
-GAME_DIR = Path(os.environ.get("TKS_GAME_DIR", r"游戏目录（原版）"))
+GAME_DIR = Path(os.environ.get("TKS_GAME_DIR", "."))
 
 
 class SkillExtBundleTests(unittest.TestCase):

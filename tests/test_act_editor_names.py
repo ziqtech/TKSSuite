@@ -152,9 +152,9 @@ class ActEditorNameTests(unittest.TestCase):
             self.assertNotIn(30, names)
 
     def test_original_data_names_unchanged(self):
-        base = Path(r'游戏目录（原版）')
+        base = Path(os.environ.get("TKS_GAME_DIR", "."))
         if not (base / 'TKKon.dat').is_file():
-            self.skipTest("需要原版游戏目录")
+            self.skipTest("需要原版游戏目录 (可用 TKS_GAME_DIR 指定)")
         names = self._build_names(base)
         # 原版数据零 "动画#" 噪声, 过滤后行为与旧版一致
         self.assertTrue(names)

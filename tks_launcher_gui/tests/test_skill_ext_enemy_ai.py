@@ -7,16 +7,17 @@
 from __future__ import annotations
 
 import json
+import os
 import struct
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 PATCH_JSON = ROOT / "tks_launcher_gui" / "patches" / "skill_ext_learn_state" / "patch.json"
-GAME_EXE = Path(r"游戏目录（改版）/TKS.exe")
-FALLBACK_EXE = Path(r"游戏目录/TKS.exe")
-WARPC = Path(r"游戏目录（改版）/WarPC.dat")
-TKSKILL = Path(r"游戏目录（改版）/TKSkill.dat")
+GAME_DIR = Path(os.environ.get("TKS_GAME_DIR", "."))
+GAME_EXE = GAME_DIR / "TKS.exe"
+WARPC = GAME_DIR / "WarPC.dat"
+TKSKILL = GAME_DIR / "TKSkill.dat"
 REC = 1054
 PLAYER_SITE = 0x30987
 ENEMY_SITE = 0x30D24
@@ -127,9 +128,9 @@ class TestSkillExtEnemyBattleMap(unittest.TestCase):
         self.assertIn("record_battle_map_player", self.entries)
 
     def test_game_exe_contains_enemy_expect_bytes(self):
-        exe = GAME_EXE if GAME_EXE.exists() else FALLBACK_EXE
+        exe = GAME_EXE
         if not exe.exists():
-            self.skipTest("游戏 EXE 不存在，跳过机器码锚点检查")
+            self.skipTest("游戏 EXE 不存在 (可用 TKS_GAME_DIR 指定)，跳过机器码锚点检查")
         data = exe.read_bytes()
         self.assertEqual(
             _bytes_at_rva(data, ENEMY_SITE, 5),

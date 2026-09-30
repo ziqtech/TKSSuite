@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """图像缩放 + 抗振铃 — 贴近 cnc-ddraw lanczos2-sharp.glsl 的抗振铃部分
 
-原始 GLSL: 启动器目录/tools\\cnc-ddraw\\Shaders\\interpolation\\lanczos2-sharp.glsl
+原始 GLSL: cnc-ddraw/Shaders/interpolation/lanczos2-sharp.glsl
 
 抗振铃算法 (GLSL L197-200):
   c11 = pixel(floor(tc)), c21 = pixel(floor(tc)+1), c12, c22 同理

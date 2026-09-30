@@ -1,4 +1,5 @@
 import json
+import os
 import struct
 import sys
 import tempfile
@@ -27,7 +28,7 @@ from core.tkspatch_loader import load_patch_directory  # noqa: E402
 
 PATCH_DIR = LAUNCHER / "patches" / "skill_ext_effect_resolver"
 PATCH_JSON = PATCH_DIR / "patch.json"
-GAME_DIR = Path(r"游戏目录（原版）")
+GAME_DIR = Path(os.environ.get("TKS_GAME_DIR", "."))
 
 CAVE = 0x00400000
 MAP = 0x00660000
@@ -97,7 +98,7 @@ class SkillEffectResolverTests(unittest.TestCase):
 
     @unittest.skipUnless(
         (GAME_DIR / "TKS.exe").is_file(),
-        "需要原版 TKS.exe 才能验证位点构建",
+        "需要原版 TKS.exe 才能验证位点构建 (可用 TKS_GAME_DIR 指定)",
     )
     def test_effect_resolver_builds_all_six_sites(self):
         cfg = load_patch_directory(str(LAUNCHER / "patches"),

@@ -39,7 +39,7 @@ utils/pe_analyzer/
 
 ```python
 import sys
-sys.path.insert(0, r'仓库根目录')
+sys.path.insert(0, r'<TKSSuite 仓库根目录>')
 from utils import pe_utils, string_utils, binary_diff, disasm_utils
 
 # 1. 读取 PE 文件
@@ -80,7 +80,7 @@ for imp in imports:
 
 ```bash
 # 设置路径
-export PYTHONPATH="仓库根目录:$PYTHONPATH"
+export PYTHONPATH="/path/to/TKSSuite:$PYTHONPATH"
 
 # 分析 PE 结构
 python -m utils.cli analyze <exe_path>

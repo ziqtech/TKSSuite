@@ -2,6 +2,7 @@
 """
 测试 pe_analyzer 工具模块
 """
+import os
 import sys
 from pathlib import Path
 
@@ -17,7 +18,7 @@ def test_pe_utils():
     print("=" * 60)
     print("Test 1: pe_utils")
     print("=" * 60)
-    exe_path = r"MOD文档/exe比对\TKS-颠动沧溟强化版2.0.exe"
+    exe_path = os.environ.get("TKS_TEST_EXE", "TKS-颠动沧溟强化版2.0.exe")
     p = Path(exe_path)
     if not p.exists():
         print(f"  [SKIP] File not found: {exe_path}")
@@ -46,7 +47,7 @@ def test_string_utils():
     print("=" * 60)
     print("Test 2: string_utils")
     print("=" * 60)
-    exe_path = r"MOD文档/exe比对\TKS-颠动沧溟强化版2.0.exe"
+    exe_path = os.environ.get("TKS_TEST_EXE", "TKS-颠动沧溟强化版2.0.exe")
     p = Path(exe_path)
     if not p.exists():
         print(f"  [SKIP] File not found")
@@ -75,7 +76,7 @@ def test_disasm_utils():
     print("=" * 60)
     print("Test 3: disasm_utils")
     print("=" * 60)
-    exe_path = r"MOD文档/exe比对\TKS-颠动沧溟强化版2.0.exe"
+    exe_path = os.environ.get("TKS_TEST_EXE", "TKS-颠动沧溟强化版2.0.exe")
     p = Path(exe_path)
     if not p.exists():
         print(f"  [SKIP] File not found")
@@ -109,8 +110,8 @@ def test_binary_diff():
     print("=" * 60)
     print("Test 4: binary_diff")
     print("=" * 60)
-    base_path = r"MOD文档/exe比对\TKS-2013强化版.exe"
-    ext_path = r"MOD文档/exe比对\TKS-颠动沧溟强化版2.0.exe"
+    base_path = os.environ.get("TKS_BASE_EXE", "TKS-2013强化版.exe")
+    ext_path = os.environ.get("TKS_EXT_EXE", "TKS-颠动沧溟强化版2.0.exe")
     bp, ep = Path(base_path), Path(ext_path)
     if not bp.exists() or not ep.exists():
         print(f"  [SKIP] Files not found")
