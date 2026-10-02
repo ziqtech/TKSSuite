@@ -30,6 +30,7 @@ import re
 import struct
 
 from editor_utils.lzss import lzss_decompress_dat
+from editor_utils.skill_table import load_skill_table_safe
 from editor_utils.skill_extension import (
     GAME_EXTENDED_TKKON_DEFAULT,
     GAME_SKILL_BASE,
@@ -209,46 +210,15 @@ class KonNameResolver:
         return {}
 
     def _load_skill_data(self, tks_dir: str, tkt: dict[int, str]):
-        """加载 TKSkill.dat 并解析所有技能的名称和类型。
+        """加载 TKSkill.dat, 返回 (names, types)。
 
-        Returns: (names, types)
-          names: {skill_index: skill_name}
-          types: {skill_index: type_value}   (0=指令, 1=主动, 2=被动, 3=移动)
-
-        与 warpc_editor.py _load_skill_names() 保持一致: 条数按解压后
-        大小动态推导 (tkskill_expand 后含 350..696 扩展技能),
-        不再限于原版 350 条。
+        统一实现见 editor_utils.skill_table: 条数按实际记录数推导
+        (tkskill_expand 后含 350..696 扩展技能), 名称/类型规则与各编辑器一致。
         """
-        path = os.path.join(tks_dir, 'TKSkill.dat')
-        if not os.path.exists(path):
+        table = load_skill_table_safe(os.path.join(tks_dir, 'TKSkill.dat'), tkt)
+        if table is None:
             return {}, {}
-
-        try:
-            with open(path, 'rb') as f:
-                raw = f.read()
-            dec = lzss_decompress_dat(raw)
-            if len(raw) % SKILL_REC == 0 and (len(dec) == 0 or len(dec) % SKILL_REC != 0):
-                dec = raw
-        except Exception:
-            return {}, {}
-
-        names: dict[int, str] = {}
-        types: dict[int, int] = {}
-        for i in range(len(dec) // SKILL_REC):
-            off = i * SKILL_REC
-            if off + 6 > len(dec):
-                break
-            name_id = struct.unpack_from('<h', dec, off)[0]
-            stype = struct.unpack_from('<h', dec, off + 4)[0]
-            types[i] = stype
-
-            if name_id > 0 and name_id in tkt:
-                names[i] = tkt[name_id].split('\n')[0].strip()
-            elif name_id < 0 and -name_id in tkt:
-                names[i] = tkt[-name_id].split('\n')[0].strip()
-            elif name_id:
-                names[i] = f'文本#{name_id}'
-        return names, types
+        return table.names, table.types
 
     def _load_kon(self, tks_dir: str) -> list[dict]:
         """加载 TKKon.dat 条目。

@@ -50,7 +50,7 @@ USE_RIGHT_PAGE_TO_FIELD = {
     3: 'use_right_armor', 4: 'use_right_accessory',
 }
 
-SKILL_LEARN_COUNT = 344
+SKILL_LEARN_COUNT = 344   # 原版学习区条数 (0..343); 扩展技能 350+ 见 editor_utils.skill_table
 SKILL_LEARN_STATES = ["0-不会","1-等待学","10-可以学","20-组技能学会","30-子技能学会"]
 
 # 技能学习/状态抵抗 打包字节区起始 int16 字段索引

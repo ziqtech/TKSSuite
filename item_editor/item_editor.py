@@ -64,6 +64,9 @@ from editor_utils.picker_dialogs import (
     STATUS_ICON_BASE, STATUS_NAMES, BitmaskPickerDialog, SkillPickerDialog,
     StatusPickerDialog, TktPickerDialog,
 )
+from editor_utils.skill_table import (
+    SKILL_TYPES, load_skill_table_safe,
+)
 from editor_utils.tkt_display import color_tags_html, item_name_color_text, strip_tkt_macros
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.theme_switcher import (
@@ -94,20 +97,9 @@ def load_tkt_full(tkt_path):
     return load_tkt_simple(tkt_path, full_strip=True)
 
 def load_tkskill_names(sp, tkt):
-    if not sp or not os.path.exists(sp): return {}
-    with open(sp, 'rb') as f:
-        raw = f.read()
-    dec = lzss_decompress_dat(raw)
-    REC = 94
-    names = {}
-    # 兜底: 解压结果不对齐记录边界但原始文件对齐 → 未压缩 raw 数据
-    if len(raw) % REC == 0 and (len(dec) == 0 or len(dec) % REC != 0):
-        dec = raw
-    for i in range(min(350, len(dec)//REC)):
-        sid = struct.unpack_from('<h', dec, i*REC)[0]
-        n = tkt.get(sid,"") or tkt.get(-sid,"") or f"Skill#{sid}"
-        names[i] = n
-    return names
+    """技能索引 → 名称 (统一实现见 editor_utils.skill_table, 含扩展技能 350+)。"""
+    table = load_skill_table_safe(sp, tkt)
+    return table.names if table is not None else {}
 
 # ============================================================
 # 常量 (Maker.exe TksModify.dll 文案 + TKS.exe 反编译)
@@ -381,6 +373,7 @@ class ItemEditorApp(FieldUndoMixin, EditorMainWindow):
         self.tkt = {}
         self.tkt_full = {}
         self.skill_names = {}
+        self._skill_table = None   # editor_utils.skill_table.SkillTable
         self._original_records = []  # 原始快照，用于 MOD 导出
         self._mu_sprites = []
         self._icon_pixmaps = {}
@@ -792,7 +785,8 @@ class ItemEditorApp(FieldUndoMixin, EditorMainWindow):
         else:
             self.tkt_full = {}
         if self.skill_path:
-            self.skill_names = load_tkskill_names(self.skill_path, self.tkt)
+            self._skill_table = load_skill_table_safe(self.skill_path, self.tkt)
+            self.skill_names = self._skill_table.names if self._skill_table else {}
         if self.mu_path:
             self._mu_sprites = load_mu_sprites(self.mu_path) or []
             self._icon_pixmaps.clear()
@@ -1175,11 +1169,13 @@ class ItemEditorApp(FieldUndoMixin, EditorMainWindow):
     # ── 弹窗: 技能 ──
     def _pick_skill(self, fn):
         """弹窗选择技能"""
-        if not self.skill_names: return
-        rows = [(idx, (str(idx), nm[:60]), None)
-                for idx, nm in sorted(self.skill_names.items())]
-        dlg = SkillPickerDialog(self, rows, ("索引", "技能名称"),
-                                stretch_columns={1}, minimum_widths=[50, 90])
+        if not self._skill_table: return
+        dlg = SkillPickerDialog(
+            self, self._skill_table.picker_rows(),
+            ("技能#", "类型", "名称", "技能说明"),
+            stretch_columns={3}, minimum_widths=[55, 55, 90, 160],
+            fill_viewport=True, size=(760, 520),
+            type_filter=[(k, v) for k, v in sorted(SKILL_TYPES.items())])
         if dlg.exec() == QDialog.Accepted and dlg.selected_index is not None:
             self.widget_map[fn].setText(str(dlg.selected_index))
             nm = self.skill_names.get(dlg.selected_index, "") if dlg.selected_index > 0 else ""

@@ -26,6 +26,7 @@ from PySide6.QtCore import (
     QRect, QItemSelection, QItemSelectionModel, QTimer,
 )
 
+from editor_utils.skill_table import SKILL_ORIG_CNT
 from warpc_schema import (
     FIELD_SCHEMA, SCHEMA_GROUPS, WARPC_FIELD_COUNT,
     SKILL_LEARN_COUNT, SKILL_LEARN_BASE, SKILL_LEARN_STATES,
@@ -141,7 +142,11 @@ def build_preset_columns(preset, editor):
             cols.append(ColumnSpec('learn', nm[:10], learn_idx=i))
     elif preset == '技能效果判定':
         # = 表单 Tab4: [273]+ 指令技能→TKKon 动画映射 (双击弹 TKKon 选择器)
-        active = ([i for i in range(350) if editor._skill_types.get(i) == 0]
+        # 效果列直接映射 WarPC 固定字段 [273+slot] (原版指令技能专用映射);
+        # 扩展技能 (>=350) 的效果走外置映射与 TKKon 覆盖, 由表单模式的
+        # 「附加技能效果判定」页维护, 故此处保持原版条数范围。
+        active = ([i for i in sorted(editor._skill_types)
+                   if i < SKILL_ORIG_CNT and editor._skill_types.get(i) == 0]
                   if editor._skill_types else [])
         max_slots = WARPC_FIELD_COUNT - 273
         for slot, skill_idx in enumerate(active[:max_slots]):

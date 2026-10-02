@@ -175,6 +175,18 @@ def lzss_compress_dat(data: bytes) -> bytes:
     return struct.pack('<II', ds, len(bd)) + bd
 
 
+def decompress_with_fallback(raw: bytes, rec_size: int) -> bytes:
+    """DAT 解压 + 未压缩兜底 (各定长记录表通用).
+
+    少数 .dat 由 MOD/工具直接落盘为未压缩记录, 此时 LZSS 解压结果不会对齐
+    记录边界, 而原始文件对齐 —— 判定为未压缩数据并原样返回。
+    """
+    dec = lzss_decompress_dat(raw)
+    if len(raw) % rec_size == 0 and (len(dec) == 0 or len(dec) % rec_size != 0):
+        return raw
+    return dec
+
+
 # ═══════════════════════════════════════════════════════════════
 # 公开 API — Save 格式 (4字节头: [ts][stream])
 # ═══════════════════════════════════════════════════════════════

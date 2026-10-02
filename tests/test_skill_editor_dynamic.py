@@ -483,11 +483,12 @@ class SkillEditorDynamicTests(unittest.TestCase):
             path = Path(td) / "TKSkill.dat"
             save_skills(str(path), records)
             obj = SimpleNamespace(_get_tks_dir=lambda: td)
-            names, types, _descs = \
-                warpc_module.WarpcEditorV2._load_skill_names(obj, {})
+            table = warpc_module.WarpcEditorV2._load_skill_table(obj, {})
+            names, types = table.names, table.types
 
         self.assertEqual(types.get(350), 1)
-        self.assertEqual(names.get(350), "#9350")
+        # 名称回退文案由 editor_utils.skill_table 统一 (Skill#文本ID)
+        self.assertEqual(names.get(350), "Skill#9350")
 
     def test_warpc_editor_edits_extended_skill_state_matrix(self):
         from PySide6.QtWidgets import QApplication

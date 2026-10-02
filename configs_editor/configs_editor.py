@@ -29,6 +29,7 @@ from editor_utils.app_shell import EditorMainWindow, run_editor
 from editor_utils.tab_widget import EditorTabWidget
 from editor_utils.ui_helpers import themed_question, confirm_close, update_path_labels
 from editor_utils.lzss import lzss_decompress_dat
+from editor_utils.skill_table import load_skill_table_safe
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.version import format_title
 from editor_utils.shared_state import pick_tks_directory
@@ -84,27 +85,10 @@ SKILL_REC = 94  # TKSkill.dat 每条记录 94 字节 (47 × int16)
 
 def load_skill_names(skill_path: str, tkt_names: dict) -> dict:
     """加载 TKSkill.dat，返回 {skill_num: skill_name}。
-    参照 skill_editor.py 的 SKILL_REC=94, SKILL_CNT=350 格式。
-    """
-    with open(skill_path, 'rb') as f:
-        raw = f.read()
-    dec = lzss_decompress_dat(raw)
-    # 兜底: LZSS 解压结果不对齐记录边界但原始文件对齐 → 未压缩 raw 数据
-    if len(raw) % SKILL_REC == 0 and (len(dec) == 0 or len(dec) % SKILL_REC != 0):
-        dec = raw
-    if not dec or len(dec) < SKILL_REC:
-        return {}
-    result = {}
-    count = len(dec) // SKILL_REC
-    for i in range(count):
-        off = i * SKILL_REC
-        vals = struct.unpack_from('<' + 'h' * 47, dec, off)
-        text_id = vals[0]  # skill_text_id @ offset 0
-        if text_id and text_id in tkt_names:
-            result[i] = tkt_names[text_id]
-        elif text_id:
-            result[i] = f"技能{text_id}"
-    return result
+
+    统一实现见 editor_utils.skill_table (条数按实际记录数, 含扩展技能 350+)。"""
+    table = load_skill_table_safe(skill_path, tkt_names)
+    return table.names if table is not None else {}
 
 
 class ConfigsEditorWindow(EditorMainWindow):

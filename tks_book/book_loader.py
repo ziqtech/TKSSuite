@@ -14,7 +14,10 @@
 import os
 import struct
 
-from editor_utils.lzss import lzss_decompress_dat
+from editor_utils.lzss import decompress_with_fallback
+from editor_utils.skill_table import (
+    SKILL_REC, SKILL_TYPES, load_skill_records_safe,
+)
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.jvg_loader import load_mu_sprites
 from editor_utils.game_defs import STATUS_NAMES
@@ -38,7 +41,7 @@ SKILL_CNT = 350            # 原版条数 (仅作参考; load_skills 按实际�
 ITEM_REC = 64
 ITEM_CNT = 600            # 原版记录数 (仅作参考; load_items 按实际记录数加载)
 
-SKILL_TYPES = {0: "指令技能", 1: "主动技能", 2: "被动技能", 3: "移动技能"}
+# SKILL_TYPES 由 editor_utils.skill_table 统一提供 (见上方导入)
 ATK_TYPES = {-1: "近战攻击", 0: "物理攻击", 1: "术法攻击", 10: "召唤攻击"}
 SPECIAL_FLAG_NAMES = ["飘浮", "飙行", "搜宝", "解陷"]
 COMBAT_FLAG_NAMES = ["战后JP×2~3", "战后全恢复+异常全解", "经验×2~3平分队友", "经验独得"]
@@ -145,19 +148,14 @@ ITEM_VIEW_FIELDS = [
 # dat 解析 (与各编辑器 load_* 保持一致)
 # ═══════════════════════════════════════════════════════════════
 
-def _decompress_with_fallback(raw, rec_size):
-    """LZSS 解压 + 未压缩兜底 (各编辑器通用模式)"""
-    dec = lzss_decompress_dat(raw)
-    if len(raw) % rec_size == 0 and (len(dec) == 0 or len(dec) % rec_size != 0):
-        dec = raw
-    return dec
+# 兜底解压统一由 editor_utils.lzss.decompress_with_fallback 提供
 
 
 def load_warpc(fp):
     """WarPC.dat → [{'index', 'fields': [527×int16]}, ...]"""
     with open(fp, 'rb') as f:
         raw = f.read()
-    dec = _decompress_with_fallback(raw, WARPC_REC)
+    dec = decompress_with_fallback(raw, WARPC_REC)
     if len(dec) % WARPC_REC != 0:
         raise ValueError(f"WarPC 解压后大小 {len(dec)} 不是 {WARPC_REC} 的整数倍")
     recs = []
@@ -170,26 +168,17 @@ def load_warpc(fp):
 def load_skills(fp):
     """TKSkill.dat → [{'index', 'vals': (47×int16)}, ...]
 
-    条数按解压后大小动态推导 (tkitem/tkskill_expand 后可超过原版 350,
-    与 skill_editor.load_skills 同款)"""
-    with open(fp, 'rb') as f:
-        raw = f.read()
-    dec = _decompress_with_fallback(raw, SKILL_REC)
-    recs = []
-    for i in range(len(dec) // SKILL_REC):
-        off = i * SKILL_REC
-        if off + SKILL_REC > len(dec):
-            break
-        vals = struct.unpack_from('<' + 'h' * 47, dec, off)
-        recs.append({'index': i, 'vals': vals})
-    return recs
+    统一实现见 editor_utils.skill_table: 条数按实际记录数推导
+    (tkskill_expand 后可到 697), 文件损坏时返回空列表。"""
+    return [{'index': i, 'vals': tuple(fields)}
+            for i, fields in enumerate(load_skill_records_safe(fp))]
 
 
 def load_items(fp):
     """TKItem.dat → [{'index', 'vals': (32×int16)}, ...]"""
     with open(fp, 'rb') as f:
         raw = f.read()
-    dec = _decompress_with_fallback(raw, ITEM_REC)
+    dec = decompress_with_fallback(raw, ITEM_REC)
     recs = []
     # 按实际记录数加载 (tkitem_expand 后可超过原版 600 条)
     for i in range(len(dec) // ITEM_REC):

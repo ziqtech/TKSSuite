@@ -27,6 +27,9 @@ from editor_utils.dock_components import DockHeader
 from editor_utils.adaptive_table import AdaptiveTableWidget
 from editor_utils.jvg_loader import get_sprite_pixmap, load_mu_sprites
 from editor_utils.lzss import lzss_compress_dat, lzss_decompress_dat
+from editor_utils.skill_table import (
+    SKILL_TYPES, load_skill_records,
+)
 from editor_utils.theme_manager import business_colors
 
 # 播种徽标底色 — 深饱和色配白字保证对比, 深浅主题一致 (阶段 2 豁免: 主题无关领域色)
@@ -82,7 +85,7 @@ SKILL_REC = 94
 SKILL_ORIG_CNT = 350
 SKILL_CNT = SKILL_ORIG_CNT  # backward-compatible name
 SKILL_MAX_CNT = GAME_SKILL_BASE + GAME_SKILL_CAPACITY
-SKILL_TYPES = {0: "指令技能", 1: "主动技能", 2: "被动技能", 3: "移动技能"}
+# SKILL_TYPES 由 editor_utils.skill_table 统一提供 (见上方导入)
 SKILL_TYPE_VALUES = [f"{k}-{v}" for k, v in sorted(SKILL_TYPES.items())]
 ATK_TYPE_VALUES = {-1: "普通攻击", 0: "物理技能", 1: "法术技能", 10: "召唤术"}
 
@@ -208,20 +211,12 @@ def skill_name(rec, tkt):
 
 
 def load_skills(fp):
-    with open(fp, 'rb') as f:
-        raw = f.read()
-    dec = lzss_decompress(raw)
-    # 兜底: LZSS 解压结果不对齐记录边界但原始文件对齐 → 未压缩 raw 数据
-    if len(raw) % SKILL_REC == 0 and (len(dec) == 0 or len(dec) % SKILL_REC != 0):
-        dec = raw
-    if not dec or len(dec) % SKILL_REC:
-        raise ValueError(
-            f"解压后大小 {len(dec)} 不是技能记录大小 {SKILL_REC} 的整数倍")
+    """TKSkill.dat → [{'index', 字段...}, ...]
+
+    记录解析统一见 editor_utils.skill_table (条数按实际记录数, 含扩展技能);
+    记录不对齐时抛 ValueError。"""
     recs = []
-    count = len(dec) // SKILL_REC
-    for i in range(count):
-        off = i * SKILL_REC
-        fields = struct.unpack_from('<' + 'h' * 47, dec, off)
+    for i, fields in enumerate(load_skill_records(fp)):
         rec = {'index': i}
         for k, fo, _, _, _ in ALL_FIELDS:
             rec[k] = fields[fo // 2]

@@ -57,6 +57,7 @@ from editor_utils.lzss import (
     lzss_compress_save, lzss_decompress_dat, lzss_decompress_save,
 )
 from editor_utils.picker_dialogs import ItemPickerDialog
+from editor_utils.skill_table import load_skill_table_safe
 from editor_utils.skill_extension import (
     migrate_for_original_game,
     parse_skill_extension,
@@ -554,6 +555,9 @@ class SaveEditorApp(EditorMainWindow):
 
         # 外部资源
         self.tkt = {}
+        self._skill_table = None   # editor_utils.skill_table.SkillTable
+        self.skill_names = {}
+        self._skill_types = {}
         self.item_records = {}
         self.item_names = {}
         self.tkkon_names = {}
@@ -1141,56 +1145,17 @@ class SaveEditorApp(EditorMainWindow):
         if os.path.exists(mu_path):
             self._mu_sprites = load_mu_sprites(mu_path) or []
             self._icon_pixmaps.clear()
+        # TKSkill 名称/类型 (统一实现见 editor_utils.skill_table, 含扩展技能 350+)
+        self._skill_table = load_skill_table_safe(
+            os.path.join(parent, 'TKSkill.dat'), self.tkt)
+        self.skill_names = self._skill_table.names if self._skill_table else {}
+        self._skill_types = self._skill_table.types if self._skill_table else {}
         # TKKon 名称 (动态解析)
         try:
             resolver = KonNameResolver(parent)
             self.tkkon_names = resolver.get_all_names()
         except Exception:
             self.tkkon_names = {}
-
-    def _parse_skill_dat(self, path):
-        try:
-            with open(path, 'rb') as f:
-                raw = f.read()
-            dec = lzss_decompress_dat(raw)
-            if len(raw) % 94 == 0 and (len(dec) == 0 or len(dec) % 94 != 0):
-                dec = raw
-            names = {}
-            for i in range(350):
-                off = i * 94
-                if off + 6 > len(dec):
-                    break
-                name_id = struct.unpack_from('<h', dec, off)[0]
-                if name_id > 0 and name_id in self.tkt:
-                    names[i] = self.tkt[name_id].split('\n')[0].strip()[:20]
-                elif name_id < 0 and -name_id in self.tkt:
-                    names[i] = self.tkt[-name_id].split('\n')[0].strip()[:20]
-                elif name_id:
-                    names[i] = f'#{name_id}'
-            return names
-        except Exception:
-            return {}
-
-    def _parse_skill_types(self, path):
-        """解析 TKSkill.dat 的 type 字段 (供 warpc editor 技能效果判定 tab 使用)
-        TKSkill 记录 94 字节: [0]name_id [2]unknown [4]type [6]...
-        """
-        try:
-            with open(path, 'rb') as f:
-                raw = f.read()
-            dec = lzss_decompress_dat(raw)
-            if len(raw) % 94 == 0 and (len(dec) == 0 or len(dec) % 94 != 0):
-                dec = raw
-            types = {}
-            for i in range(350):
-                off = i * 94
-                if off + 6 > len(dec):
-                    break
-                skill_type = struct.unpack_from('<h', dec, off + 4)[0]
-                types[i] = skill_type
-            return types
-        except Exception:
-            return {}
 
     def _parse_item_dat(self, path):
         try:

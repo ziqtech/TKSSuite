@@ -91,6 +91,9 @@ from editor_utils.jvg_loader import load_mu_sprites, get_sprite_pixmap
 from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, resolve_config_path, show_field_ref, themed_messagebox, EditorComboBox, NoWheelSpinBox, backup_existing_file
 from editor_utils.version import format_title
 from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat, lzss_decompress_save, lzss_compress_save
+from editor_utils.skill_table import (
+    SKILL_TYPE_SHORT, load_skill_table_safe,
+)
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.tkt_display import strip_tkt_macros
 from editor_utils.shared_state import pick_tks_directory
@@ -337,6 +340,18 @@ def save_warpc_to_save(save_path, seg1, seg2, records,
         raise RuntimeError("技能扩展块回读验证失败")
     return True
 
+
+def resolve_save_extension_tail(save_has_extension, extension):
+    """存档模式回写尾部: 仅当原存档本就带 TKSX 扩展块时才写。
+
+    原版存档 (无扩展块) 必须保持原版格式: 追加扩展块会让存档变成"附加存档",
+    旧版游戏与未启用扩展的启动器都读不了。扩展状态改不了 (界面只读),
+    这里也不写, 两者口径一致。
+    """
+    if not save_has_extension or extension is None:
+        return b""
+    return extension.to_bytes()
+
 # ═══════════════════════════════════════════════════════════════
 # 弹窗选择器
 # ═══════════════════════════════════════════════════════════════
@@ -546,6 +561,8 @@ class WarpcEditorV2(EditorMainWindow):
         self._seg1 = None         # Frame2 seg1 原始字节 (回写时需要)
         self._seg2 = None         # Frame2 seg2 原始字节 (回写时需要)
         self._extension_tail = b""  # Frame2 之后的技能扩展块
+        self._save_has_extension = False  # 原存档是否本就带 TKSX 扩展块 (决定回写格式)
+        self._skill_table = None   # editor_utils.skill_table.SkillTable
         self._skill_extension = None
         self._draft_skill_extension = None
         self._game_dir = None     # 游戏资源目录 (TKT/TKItem/Fa.JVG 所在目录)
@@ -1368,7 +1385,7 @@ class WarpcEditorV2(EditorMainWindow):
         return list(range(extension.skill_base, end))
 
     def _populate_extended_learn_grid(self):
-        """重建扩展技能控件；模板模式或没有 TKSX 时隐藏该区域。"""
+        """重建扩展技能控件；模板与存档模式均显示 (原版存档只读)。"""
         group = getattr(self, '_ext_skill_group', None)
         grid = getattr(self, '_ext_skill_learn_grid', None)
         if group is None or grid is None:
@@ -1378,24 +1395,30 @@ class WarpcEditorV2(EditorMainWindow):
         self._ext_skill_learn_labels = []
         self._ext_skill_learn_by_idx = {}
         extension = getattr(self, '_skill_extension', None)
-        visible = not bool(getattr(self, '_save_mode', False))
-        group.setVisible(visible)
-        if not visible:
-            return
+        save_mode = bool(getattr(self, '_save_mode', False))
+        # 原版存档 (无 TKSX 尾部) 只读: 保存阶段不会把存档升级成附加存档格式,
+        # 因此扩展状态改不了, 也不能假装能改
+        locked = save_mode and not bool(getattr(self, '_save_has_extension', False))
+        group.setVisible(True)
         if extension is None:
             self._ext_skill_hint.setText(
                 "未检测到扩展技能配置。请先加载含技能 350+ 的 TKSkill.dat，"
                 "或创建 WarPC.dat.tksx。")
             return
-        save_mode = bool(getattr(self, '_save_mode', False))
         skill_ids = self._extended_skill_ids()
         if not skill_ids:
             self._ext_skill_hint.setText(
                 "TKSkill.dat 中没有技能 350..696 的新增定义。")
             return
-        self._ext_skill_hint.setText(
-            f"技能 350..696，共 {len(skill_ids)} 条；"
-            "状态值 0/1..9/10..19/20/30。")
+        if locked:
+            self._ext_skill_hint.setText(
+                f"技能 350..696，共 {len(skill_ids)} 条；当前存档为原版格式"
+                "（无扩展块），扩展学习状态只读。保存时保持原版存档格式，"
+                "不追加附加存档数据；如需扩展状态请用游戏内扩展存档。")
+        else:
+            self._ext_skill_hint.setText(
+                f"技能 350..696，共 {len(skill_ids)} 条；"
+                "状态值 0/1..9/10..19/20/30。")
         for row, skill_idx in enumerate(skill_ids):
             r, c = divmod(row, 8)
             sname = self.skill_names.get(skill_idx, f"技能#{skill_idx}")
@@ -1408,8 +1431,10 @@ class WarpcEditorV2(EditorMainWindow):
             if save_mode:
                 w = NoWheelSpinBox()
                 w.setRange(0, 255)
+                w.setReadOnly(locked)
                 w.setToolTip("0=不会 1..9=等待学 10..19=可以学 20=组学会 30=子技能学会")
-                w.valueChanged.connect(self._check_skill_group_overflow)
+                if not locked:
+                    w.valueChanged.connect(self._check_skill_group_overflow)
             else:
                 w = EditorComboBox()
                 w.addItems(SKILL_LEARN_STATES)
@@ -1468,9 +1493,9 @@ class WarpcEditorV2(EditorMainWindow):
         self._ext_skill_effect_by_idx = {}
         self._ext_skill_effect_label_by_idx = {}
         self._ext_effect_override_error = None
-        group.setVisible(not bool(getattr(self, '_save_mode', False)))
-        if getattr(self, '_save_mode', False):
-            return
+        save_mode = bool(getattr(self, '_save_mode', False))
+        locked = save_mode and not bool(getattr(self, '_save_has_extension', False))
+        group.setVisible(True)
         extension = getattr(self, '_skill_extension', None)
         if extension is None:
             self._ext_effect_hint.setText(
@@ -1481,11 +1506,17 @@ class WarpcEditorV2(EditorMainWindow):
             self._ext_effect_hint.setText(
                 "TKSkill.dat 中没有技能 350..696 的新增定义。")
             return
-        self._ext_effect_hint.setText(
-            f"技能 350..696，共 {len(skill_ids)} 条；"
-            f"默认 TKKon {GAME_EXTENDED_TKKON_DEFAULT}，"
-            f"填写其他 {0}..{GAME_TKKON_CAPACITY - 1} 值会创建角色覆盖；"
-            f"覆盖上限 {GAME_OVERRIDE_CAPACITY} 条。")
+        if locked:
+            self._ext_effect_hint.setText(
+                f"技能 350..696，共 {len(skill_ids)} 条；当前存档为原版格式"
+                "（无扩展块），效果覆盖只读。保存时保持原版存档格式，"
+                "不追加附加存档数据。")
+        else:
+            self._ext_effect_hint.setText(
+                f"技能 350..696，共 {len(skill_ids)} 条；"
+                f"默认 TKKon {GAME_EXTENDED_TKKON_DEFAULT}，"
+                f"填写其他 {0}..{GAME_TKKON_CAPACITY - 1} 值会创建角色覆盖；"
+                f"覆盖上限 {GAME_OVERRIDE_CAPACITY} 条。")
         for row, skill_idx in enumerate(skill_ids):
             r, c = divmod(row, 8)
             sname = self.skill_names.get(skill_idx, f"技能#{skill_idx}")
@@ -1502,6 +1533,7 @@ class WarpcEditorV2(EditorMainWindow):
             bh.setSpacing(0)
             ev = QLineEdit(str(GAME_EXTENDED_TKKON_DEFAULT))
             ev.setValidator(QIntValidator(0, GAME_TKKON_CAPACITY - 1, ev))
+            ev.setReadOnly(locked)
             ev.setToolTip(
                 f"默认 TKKon {GAME_EXTENDED_TKKON_DEFAULT}；"
                 "填写其他值会为该角色创建稀疏覆盖。")
@@ -1510,6 +1542,7 @@ class WarpcEditorV2(EditorMainWindow):
             set_themed_icon(btn, "picker")
             btn.setObjectName("FakeInputRightButton")
             btn.setFixedWidth(26)
+            btn.setEnabled(not locked)
             btn.clicked.connect(
                 lambda _, sid=skill_idx, sv=ev:
                 self._pick_extended_tkkon(sid, sv))
@@ -1935,6 +1968,7 @@ class WarpcEditorV2(EditorMainWindow):
         self._save_slot = slot_num
         self._game_dir = game_dir  # 直接存储游戏目录
         self._extension_tail = b""
+        self._save_has_extension = False  # 由本次加载结果确定 (见 _on_load_success)
         self.warpc_path = save_path  # 用于资源路径推导
         # game_dir 就是用户选择的游戏目录
         self.tkt_path = os.path.join(game_dir, 'TKT.dat') if os.path.exists(os.path.join(game_dir, 'TKT.dat')) else None
@@ -1981,10 +2015,13 @@ class WarpcEditorV2(EditorMainWindow):
                 seg1 = seg2 = None
                 extension_tail = b""
             # 后台线程内 self.tkt 仍是上一次 (首次为空) 的值, 必须传入本次加载的 tkt
-            skill_names, skill_types, skill_descs = self._load_skill_names(tkt)
+            skill_table = self._load_skill_table(tkt)
             if save_mode:
-                max_skill = max(skill_names, default=349)
+                max_skill = max(skill_table.names, default=349)
                 skill_count = max(0, max_skill - 349)
+                # 原存档本就带 TKSX 扩展块才算"附加存档"; 缺失时仅补齐草稿供查看,
+                # 保存阶段按该标记决定是否回写尾部 (原版存档保持原版格式)
+                save_has_extension = bool(extension_tail)
                 if extension_tail:
                     extension = migrate_for_original_game(
                         parse_skill_extension(extension_tail),
@@ -2002,7 +2039,8 @@ class WarpcEditorV2(EditorMainWindow):
                 extension_tail = (
                     extension.to_bytes() if extension is not None else b"")
             else:
-                max_skill = max(skill_names, default=349)
+                save_has_extension = False
+                max_skill = max(skill_table.names, default=349)
                 skill_count = max(0, max_skill - 349)
                 sidecar = Path(str(warpc_path) + ".tksx")
                 if sidecar.is_file():
@@ -2025,8 +2063,8 @@ class WarpcEditorV2(EditorMainWindow):
             tkkon_names = self._load_tkkon_names()
             item_names, item_idx_names, idx_to_id, id_to_idx = self._load_item_names(tkt)
             return (mu, tkt, fa, records, seg1, seg2,
-                    extension_tail, extension,
-                    skill_names, skill_types, skill_descs, tkkon_names,
+                    extension_tail, extension, save_has_extension, skill_table,
+                    tkkon_names,
                     item_names, item_idx_names, idx_to_id, id_to_idx)
 
         self._load_worker = run_background(
@@ -2036,7 +2074,7 @@ class WarpcEditorV2(EditorMainWindow):
 
     def _on_load_success(self, result):
         (mu, tkt, fa, records, seg1, seg2, extension_tail, extension,
-         skill_names, skill_types, skill_descs, tkkon_names,
+         save_has_extension, skill_table, tkkon_names,
          item_names, item_idx_names, idx_to_id, id_to_idx) = result
         self._mu_sprites = mu
         self._icon_pixmaps.clear()
@@ -2047,6 +2085,7 @@ class WarpcEditorV2(EditorMainWindow):
         self._seg1 = seg1
         self._seg2 = seg2
         self._extension_tail = extension_tail
+        self._save_has_extension = save_has_extension
         self._skill_extension = extension
         self._draft_skill_extension = extension
         self._dirty = False
@@ -2054,9 +2093,10 @@ class WarpcEditorV2(EditorMainWindow):
         self._original_records = [list(r['fields']) for r in self.records]
         # 重建共享草稿层 (与 records 一致, 无待应用修改)
         self._sync_draft_from_records()
-        self.skill_names = skill_names
-        self._skill_types = skill_types
-        self.skill_descs = skill_descs
+        self._skill_table = skill_table
+        self.skill_names = skill_table.names if skill_table else {}
+        self._skill_types = skill_table.types if skill_table else {}
+        self.skill_descs = skill_table.descs if skill_table else {}
         self._build_skill_graph()
         self.tkkon_names = tkkon_names
         self.item_names = item_names
@@ -2125,37 +2165,10 @@ class WarpcEditorV2(EditorMainWindow):
             return self._game_dir
         return os.path.dirname(self.warpc_path) if self.warpc_path else ''
 
-    def _load_skill_names(self, tkt):
-        tks_dir = self._get_tks_dir()
-        sk_path = os.path.join(tks_dir, 'TKSkill.dat')
-        if not os.path.exists(sk_path):
-            return {}, {}, {}
-        try:
-            with open(sk_path, 'rb') as f:
-                raw = f.read()
-            dec = lzss_decompress(raw)
-            if len(raw) % 94 == 0 and (len(dec) == 0 or len(dec) % 94 != 0):
-                dec = raw
-            names, types, descs = {}, {}, {}
-            count = len(dec) // 94
-            for i in range(count):
-                off = i * 94
-                if off + 6 > len(dec):
-                    break
-                name_id = struct.unpack_from('<h', dec, off)[0]
-                stype = struct.unpack_from('<h', dec, off + 4)[0]
-                types[i] = stype
-                if name_id > 0 and name_id in tkt:
-                    names[i] = tkt[name_id].split('\n')[0].strip()[:20]
-                elif name_id:
-                    names[i] = f'#{name_id}'
-                # 技能说明 TKT 文本ID = 名称文本ID + 400 (语义同 skill_editor)
-                did = name_id + 400
-                if name_id > 0 and did in tkt:
-                    descs[i] = tkt[did]
-            return names, types, descs
-        except:
-            return {}, {}, {}
+    def _load_skill_table(self, tkt):
+        """技能表 (记录/名称/类型/说明) — 统一实现见 editor_utils.skill_table。"""
+        return load_skill_table_safe(
+            os.path.join(self._get_tks_dir(), 'TKSkill.dat'), tkt)
 
     def _build_skill_graph(self):
         """从 TKSkill.dat 解析技能树引用表, 构建进度图 (逆向依据 sub_41E248):
@@ -2350,8 +2363,10 @@ class WarpcEditorV2(EditorMainWindow):
 
     def _refresh_learn_toolbar_mode(self):
         """按模式切换技能学习页:
-        - 存档模式: 单元格用数字框 (直接输入运行时原值), 整体隐藏模板编排工具条, 显示提示;
+        - 存档模式: 单元格用数字框 (直接输入运行时原值), 隐藏模板编排工具条, 显示提示;
         - 模板模式: 单元格用带语义下拉框, 显示编排工具条。
+        附加技能 / 附加技能效果判定两页在两种模式都显示; 存档模式下若原存档是
+        原版格式 (无 TKSX 扩展块), 这两页只读, 保存时也不会追加扩展块。
         控件类型与模式不符时重建单元格, 并回填当前角色的值。"""
         if not hasattr(self, '_skill_learn_grid'):
             return
@@ -2380,12 +2395,10 @@ class WarpcEditorV2(EditorMainWindow):
             self._populate_extended_learn_grid()
         if hasattr(self, '_ext_effect_group'):
             self._populate_extended_effect_grid()
-        extra_tab = getattr(self, '_extra_skill_tab_index', None)
-        if extra_tab is not None and hasattr(self.tabs, 'setTabVisible'):
-            self.tabs.setTabVisible(extra_tab, not save_mode)
-        extra_effect_tab = getattr(self, '_extra_effect_tab_index', None)
-        if extra_effect_tab is not None and hasattr(self.tabs, 'setTabVisible'):
-            self.tabs.setTabVisible(extra_effect_tab, not save_mode)
+        for tab in (getattr(self, '_extra_skill_tab_index', None),
+                    getattr(self, '_extra_effect_tab_index', None)):
+            if tab is not None and hasattr(self.tabs, 'setTabVisible'):
+                self.tabs.setTabVisible(tab, True)
 
     def _set_learn_combo(self, skill_idx, state):
         """将技能学习控件设为指定状态值 (不立即写回, 需调用 _apply_edit)。
@@ -3094,13 +3107,10 @@ class WarpcEditorV2(EditorMainWindow):
     # ── 弹窗 ──
     def _make_skill_picker(self, parent):
         """构建技能选择弹窗 (表单模式/表格编辑模式共用)。"""
-        type_names = {0: "指令", 1: "主动", 2: "被动", 3: "移动"}
-        rows = []
-        for idx in sorted(self.skill_names.keys()):
-            tid = self._skill_types.get(idx, -1)
-            rows.append((idx, (str(idx), type_names.get(tid, "?"),
-                               self.skill_names[idx],
-                               self.skill_descs.get(idx, '')), tid))
+        rows = (self._skill_table.picker_rows() if self._skill_table else
+                [(idx, (str(idx), SKILL_TYPE_SHORT.get(self._skill_types.get(idx), "?"),
+                        self.skill_names.get(idx, ''), self.skill_descs.get(idx, '')),
+                  self._skill_types.get(idx)) for idx in sorted(self.skill_names)])
         return SkillPickerDialog(
             parent, rows, ("技能#", "类型", "名称", "技能说明"),
             stretch_columns={3}, minimum_widths=[55, 55, 90, 160],
@@ -3799,11 +3809,15 @@ class WarpcEditorV2(EditorMainWindow):
         if not self._save_path or not self.records or self._seg1 is None or self._seg2 is None:
             QMessageBox.information(self, "提示", "无存档数据")
             return
+        # 原版存档保持原版格式: 不追加 TKSX 扩展块 (界面里这两页也只读)
+        tail_note = ("" if self._save_has_extension else
+                     "\n\n当前存档为原版格式（无扩展块），保存后仍为原版格式，"
+                     "不会追加附加存档数据。")
         if themed_question(self, "确认保存",
-            f"将 {len(self.records)} 个角色的 WarPC 数据写回存档:\n{self._save_path} (槽位 {self._save_slot})\n\n原存档将被备份为 .bak") != QMessageBox.Yes: return
+            f"将 {len(self.records)} 个角色的 WarPC 数据写回存档:\n{self._save_path} (槽位 {self._save_slot})\n\n原存档将被备份为 .bak{tail_note}") != QMessageBox.Yes: return
         if is_running(getattr(self, '_save_worker', None)): return
-        if self._skill_extension is not None:
-            self._extension_tail = self._skill_extension.to_bytes()
+        self._extension_tail = resolve_save_extension_tail(
+            self._save_has_extension, self._skill_extension)
         save_path, seg1, seg2, records, extension_tail = (
             self._save_path, self._seg1, self._seg2, self.records,
             self._extension_tail)
