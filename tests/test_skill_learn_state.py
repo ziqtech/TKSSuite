@@ -1,3 +1,4 @@
+import importlib.util
 import json
 import os
 import struct
@@ -46,7 +47,10 @@ from editor_utils.skill_extension import (  # noqa: E402
 )
 
 
-PATCH_JSON = LAUNCHER / "patches" / "skill_ext_learn_state" / "patch.json"
+PATCH_DIR = LAUNCHER / "patches" / "tkskill_expand"
+STATE_JSON = PATCH_DIR / "state.json"
+PATCH_JSON = PATCH_DIR / "patch.json"
+PERSISTENCE_JSON = LAUNCHER / "patches" / "tksave_expand" / "persistence.json"
 GAME_DIR = Path(os.environ.get("TKS_GAME_DIR", "."))
 
 CAVE = 0x00400000
@@ -59,6 +63,9 @@ OVERRIDE_COUNT = 0x006BAFF0
 OVERRIDE_TABLE = 0x006BB000
 EFFECT_SCRATCH = 0x006BC800
 BATTLE_MAP = 0x006B8000
+# 原版学习状态矩阵 (cave 内以 0x757F08 占位, 构建期替换为实际 WarPC 缓冲基址)
+LEGACY_WARPC = 0x757F08
+LEGACY_STATE = LEGACY_WARPC + 0xB0
 
 
 def state_addr(actor, skill=350):
@@ -66,12 +73,22 @@ def state_addr(actor, skill=350):
 
 
 def _load_cave():
-    raw = json.loads(PATCH_JSON.read_text(encoding="utf-8"))
+    """合成固定链接布局: state.json + tksave_expand/persistence.json 两包片段。"""
+    spec = importlib.util.spec_from_file_location(
+        "tkskill_expand_build", PATCH_DIR / "build.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    cave, entries, _sites, _relocations = module.assemble()
     entries = {
         key: int(value, 16) if isinstance(value, str) else int(value)
-        for key, value in raw["cave_entries"].items()
+        for key, value in entries.items()
     }
-    return bytes.fromhex(raw["cave_code"].replace(" ", "")), entries
+    return bytes(cave), entries
+
+
+def _load_patch_parts():
+    return [json.loads(path.read_text(encoding="utf-8"))
+            for path in (STATE_JSON, PERSISTENCE_JSON)]
 
 
 def _emu_base():
@@ -84,6 +101,8 @@ def _emu_base():
     # so init_extension_defaults keeps the built-in defaults during tests.
     uc.mem_write(0x004B1FC8, b"\x31\xC0\xC3")
     uc.mem_map(WARPC, 0x10000)
+    # 原版学习状态矩阵所在区 (0x757FB8 + 1054*角色), 供「紧随指令累加技能ID」用例读写
+    uc.mem_map(0x00750000, 0x90000)
     uc.mem_map(STACK - 0x10000, 0x20000)
     uc.mem_write(CAVE, cave)
     uc.mem_write(0x006B8040, struct.pack("<H", 347))
@@ -167,7 +186,6 @@ class SkillLearnStateTests(unittest.TestCase):
         return uc
 
     def test_globals_relocations_cover_reachable_address_operands(self):
-        raw = json.loads(PATCH_JSON.read_text(encoding="utf-8"))
         cave, entries = _load_cave()
         decoder = Cs(CS_ARCH_X86, CS_MODE_32)
         decoder.detail = True
@@ -196,7 +214,9 @@ class SkillLearnStateTests(unittest.TestCase):
                 if ins.group(CS_GRP_RET) or ins.mnemonic == "jmp":
                     break
                 pos += ins.size
-        self.assertEqual(raw["globals_relocations"], sorted(offsets))
+        listed = sorted({offset for part in _load_patch_parts()
+                         for offset in part.get("globals_relocations", [])})
+        self.assertEqual(listed, sorted(offsets))
         self.assertIn(0x120C, offsets)
         self.assertNotIn(0x1209, offsets)
 
@@ -226,8 +246,8 @@ class SkillLearnStateTests(unittest.TestCase):
         self.assertEqual(uc.mem_read(TEMP + 350, 1), b"\x14")
 
     def test_scan_hooks_use_word_cursor_and_preserve_other_registers(self):
-        raw = json.loads(PATCH_JSON.read_text(encoding="utf-8"))
-        sites = {int(site["rva"], 16): site for site in raw["sites"]}
+        state = json.loads(STATE_JSON.read_text(encoding="utf-8"))
+        sites = {int(site["rva"], 16): site for site in state["sites"]}
         for rva in (0x18AE1, 0x18C31):
             for start, last_index in ((5, -1), (350, 0), (697, 9)):
                 with self.subTest(rva=hex(rva), start=start, last_index=last_index):
@@ -277,25 +297,64 @@ class SkillLearnStateTests(unittest.TestCase):
         self.assertEqual(
             uc.reg_read(UC_X86_REG_EDX), 3 * 2 + 0x757FB8)
 
-    def test_state_address_helpers_route_only_new_skills(self):
+    def test_state_address_helpers_return_record_base_only(self):
+        """addr_* 助手只返回记录基址: 技能ID 由紧随其后的原版寻址指令累加。
+
+        旧实现返回「基址 + 技能ID」, 紧随指令再加一次, 有效地址变成
+        base + 2×ID: 技能书/装备学习读写落到错误槽位, 原版与扩展技能都无法学会。
+        """
         uc = self._run_state_entry("addr_neg6_eax", skill=350)
-        self.assertEqual(uc.reg_read(UC_X86_REG_EAX), state_addr(9, 350))
+        self.assertEqual(
+            uc.reg_read(UC_X86_REG_EAX), state_addr(9, 350) - 350)
 
         uc = self._run_state_entry("addr_neg6_eax", skill=349)
         self.assertEqual(
-            uc.reg_read(UC_X86_REG_EAX),
-            0x757F08 + 9 * 1054 + 349 + 0xB0)
+            uc.reg_read(UC_X86_REG_EAX), LEGACY_STATE + 9 * 1054)
 
         uc = self._run_state_entry("addr_item23_edx", item_skill=350)
-        self.assertEqual(uc.reg_read(UC_X86_REG_EDX), state_addr(9, 350))
+        self.assertEqual(
+            uc.reg_read(UC_X86_REG_EDX), state_addr(9, 350) - 350)
 
         uc = self._run_state_entry("addr_item24_ecx", item_skill=350)
-        self.assertEqual(uc.reg_read(UC_X86_REG_ECX), state_addr(9, 350))
+        self.assertEqual(
+            uc.reg_read(UC_X86_REG_ECX), state_addr(9, 350) - 350)
 
         uc = self._run_state_entry(
             "addr_neg6_eax", actor=199, skill=399)
         self.assertEqual(
-            uc.reg_read(UC_X86_REG_EAX), state_addr(199, 399))
+            uc.reg_read(UC_X86_REG_EAX), state_addr(199, 399) - 399)
+
+    def test_item_learn_reads_correct_slot_for_legacy_and_extended_actors(self):
+        """技能书 (字段23) 与装备学习 (字段24): 原版/扩展技能 × 原版/扩展人物。"""
+        cases = {
+            "addr_item23_eax": (UC_X86_REG_EAX, UC_X86_REG_ECX,
+                                "0F BE 14 08", UC_X86_REG_EDX),
+            "addr_item23_edx": (UC_X86_REG_EDX, UC_X86_REG_EAX,
+                                "0F BE 04 02", UC_X86_REG_EAX),
+            "addr_item24_ecx": (UC_X86_REG_ECX, UC_X86_REG_EDX,
+                                "0F BE 14 11", UC_X86_REG_EDX),
+            "addr_neg6_eax": (UC_X86_REG_EAX, UC_X86_REG_ECX,
+                              "0F BE 14 08", UC_X86_REG_EDX),
+        }
+        for entry, (base_reg, id_reg, next_insn, load_reg) in cases.items():
+            for actor, skill in ((9, 17), (9, 350), (200, 17),
+                                 (200, 400), (499, 696)):
+                with self.subTest(entry=entry, actor=actor, skill=skill):
+                    uc = self._run_state_entry(
+                        entry, actor=actor, item_skill=skill, skill=skill)
+                    base = uc.reg_read(base_reg)
+                    if skill < 350:
+                        expect = LEGACY_STATE + 1054 * actor + skill
+                        self.assertEqual(base, LEGACY_STATE + 1054 * actor)
+                    else:
+                        expect = state_addr(actor, skill)
+                        self.assertEqual(base, expect - skill)
+                    # 复现紧随其后的原版寻址指令 [基址 + 技能ID]
+                    uc.mem_write(expect, b"\x07")
+                    uc.reg_write(id_reg, skill)
+                    uc.mem_write(0x004B0000, bytes.fromhex(next_insn))
+                    uc.emu_start(0x004B0000, 0x004B0000 + 4)
+                    self.assertEqual(uc.reg_read(load_reg), 7)
 
     def test_direct_state_reads_and_writes_use_external_table(self):
         uc = self._run_state_entry("read_menu_ecx", skill=350, ext_state=20)
@@ -782,25 +841,25 @@ class SkillLearnStateTests(unittest.TestCase):
         (GAME_DIR / "TKS.exe").is_file(),
         "需要原版 TKS.exe 才能验证学习状态位点构建",
     )
-    def test_learn_state_builds_without_scan_bound_dependency(self):
-        cfg = load_patch_directory(str(LAUNCHER / "patches"),
-                                   log_func=lambda *_a: None)
-        patch = next(p for p in cfg.patches
-                     if p.id == "skill_ext_learn_state")
+    def test_skill_state_bundle_builds_into_exe(self):
+        """技能状态 cave + 位点 + globals + WarPC 占位符可独立烧录进 EXE。"""
+        state, persistence = _load_patch_parts()
         cave, entries = _load_cave()
         site_item = SitesPatchItem(
-            patch_id=patch.id,
-            name=patch.name,
-            sites=patch.sites,
+            patch_id="tkskill_expand",
+            name=state["name"],
+            sites=list(state["sites"]) + list(persistence["sites"]),
             cave_code=cave,
             cave_entries=entries,
-            globals_ph_base=patch.globals_ph_base,
-            globals_rebase_span=patch.globals_rebase_span,
-            globals_alloc_size=patch.globals_alloc_size,
-            globals_relocations=patch.globals_relocations,
+            globals_ph_base=int(state["globals_ph_base"], 0),
+            globals_rebase_span=int(state["globals_rebase_span"], 0),
+            globals_alloc_size=int(state["globals_alloc_size"], 0),
+            globals_relocations=sorted(
+                set(state.get("globals_relocations", []))
+                | set(persistence.get("globals_relocations", []))),
         )
         with tempfile.TemporaryDirectory() as td:
-            out = Path(td) / "TKS_skill_learn.exe"
+            out = Path(td) / "TKS_skill_state.exe"
             result = ExeBuilder(str(GAME_DIR / "TKS.exe")).build(
                 [], str(out),
                 sites_patches=[site_item],

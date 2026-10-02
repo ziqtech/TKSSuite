@@ -22,7 +22,7 @@ from tks_launcher_gui.patcher.build_patches import build_all_patches, build_sing
 
 PATCHES = Path(__file__).resolve().parents[1] / "tks_launcher_gui" / "patches"
 BUNDLE_IDS = {"tkskill_size", "tkskill_expand", "tksave_expand"}
-BASELINE_SHA256 = "51be4f6ad9ec6e248a4f3a0b5a49b38da8dd401cffec7b52a5f016ae63104034"
+BASELINE_SHA256 = "4df3263849aa9a92b8b749097a6cdc3346aa2ac6dd484e7142fa3a905e061808"
 
 
 class PatchBundleChecks(unittest.TestCase):
@@ -75,7 +75,7 @@ class PatchBundleChecks(unittest.TestCase):
         state = next(p for p in self.plan().patches if p.id == "tkskill_expand.state")
         self.assertEqual(hashlib.sha256(state._cave_code_bytes).hexdigest(), BASELINE_SHA256)
         self.assertEqual((len(state.sites), len(state.cave_entries),
-                          len(state.globals_relocations)), (52, 41, 113))
+                          len(state.globals_relocations)), (52, 41, 116))
         enemy = next(s for s in state.sites if int(s["rva"], 0) == 0x30D24)
         self.assertEqual(enemy["ref"], "record_battle_map_player")
         self.assertEqual(patch_metadata(state, "owners"), ["tksave_expand", "tkskill_expand"])
