@@ -1,10 +1,9 @@
 """FONT9696 位图字体渲染助手（用于动画预览中的伤害飘字）。"""
 import os
-import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'font_editor'))
-
-from font9696_codec import Font9696
+# 包路径导入 (与 tks_book/game_font.py 一致): 裸名导入依赖运行时 sys.path 注入,
+# Nuitka 静态分析解析不到, 冻结打包后不会进入 exe (TKSActEditor 启动即崩溃)。
+from font_editor.font9696_codec import Font9696
 
 
 # 原版 FONT9696 / dword_A2C528 调色板索引（用于战斗飘字）。

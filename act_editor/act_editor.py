@@ -3182,9 +3182,16 @@ class ActEditorV2(EditorMainWindow):
             spr_b = spr_t + frame.height - 1
             dyn_x.extend([spr_l, spr_r, -ox - enemy_x])
             dyn_y.extend([spr_t, spr_b, -oy])
-            (sprites_below if L[0] < 3 else sprites_above).append(
-                (slot, eff_dir, L, src, blk, cur_abs, frame,
-                 ox, oy, spr_l, spr_t, spr_r, spr_b, False))
+            # 必须写成显式 if/else 追加: 条件表达式形式的追加目标
+            # (a if cond else b).append(...) 会让 Nuitka 4.1.3 的优化器
+            # 误判两个列表恒为空, 进而删掉下方 "无可渲染帧" 判断的分支和
+            # 整段渲染路径, 打包后预览永远显示无可渲染帧 (源码运行正常)。
+            sprite = (slot, eff_dir, L, src, blk, cur_abs, frame,
+                      ox, oy, spr_l, spr_t, spr_r, spr_b, False)
+            if L[0] < 3:
+                sprites_below.append(sprite)
+            else:
+                sprites_above.append(sprite)
 
         # 受击方立绘 (PIL, 帧偏移): 有数据则参与包围盒与合成
         defender_img = None
