@@ -618,6 +618,24 @@ def value_scan_excluding_rel32(data: bytes, value: int) -> List[int]:
     ]
 
 
+def encode_call_rel32(hook_abs: int, target_abs: int, label: str = "") -> bytes:
+    """编码 E8 rel32 call 指令字节 (共 5 字节)。
+
+    rel32 是有符号偏移: 目标在 call 之前时差值为负, 按二进制补码打包。
+    cave 地址来自 VirtualAllocEx, 可能低于 hook (如 0x001D09E0 -> 0x0043BAF8),
+    对掩码后的无符号差值用有符号 '<i' 打包会抛 struct.error; 统一在此处理。
+    差值超出 ±2GB 时 call 物理不可达, 抛 ValueError 让调用方在写入 hook
+    前失败, 而不是生成必然跳错地址的坏指令。
+    """
+    delta = target_abs - (hook_abs + 5)
+    if not -0x80000000 <= delta <= 0x7FFFFFFF:
+        detail = (f"call rel32 不可达: hook 0x{hook_abs & 0xFFFFFFFF:08X} -> "
+                  f"target 0x{target_abs & 0xFFFFFFFF:08X}, "
+                  f"距离 {delta:+,} 超出 rel32 ±2GB")
+        raise ValueError(detail + (f" [{label}]" if label else ""))
+    return b'\xE8' + struct.pack('<I', delta & 0xFFFFFFFF)
+
+
 def discover_warpc_base(code_buf: bytes, code_start_addr: int, fallback: int,
                          log_func=None) -> int:
     """

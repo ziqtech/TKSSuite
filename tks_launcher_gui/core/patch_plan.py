@@ -194,7 +194,8 @@ def protected_operation_ids(plan):
             or operation.id in plan.effective.required_by}
 
 
-def validate_runtime_plan(plan, code_buf, exe_profile=None):
+def validate_runtime_plan(plan, code_buf, exe_profile=None, config_overrides=None,
+                          code_start_addr=0x401000, base_addr=0x400000):
     from .scanner import parse_pattern, pattern_scan, value_scan_excluding_rel32
 
     code = bytes(code_buf)
@@ -264,6 +265,18 @@ def validate_runtime_plan(plan, code_buf, exe_profile=None):
                 check_pattern(operation.id, operation.pattern, operation.expect_count)
             for entry in operation.bytes_patches:
                 check_pattern(operation.id, entry["pattern"], entry.get("expect_count", 0))
+
+    from .patch_conflicts import validate_write_conflicts
+    try:
+        validate_write_conflicts(
+            plan, code_buf,
+            config_overrides=config_overrides,
+            exe_profile=exe_profile,
+            code_start_addr=code_start_addr,
+            base_addr=base_addr,
+        )
+    except ValueError as exc:
+        raise PatchPlanError(str(exc)) from exc
 
 
 def build_patch_plan(patches, selected=None, disabled=None, resolve_file=None, log_func=None):

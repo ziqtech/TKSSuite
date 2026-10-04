@@ -50,13 +50,22 @@ import shutil
 import subprocess
 import sys
 import time
+import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 
+# 构建脚本需同时导入仓库根目录 (editor_utils.*) 与 build/ 目录 (editors_registry)。
+# 直接执行时脚本目录由解释器自动加入 sys.path, `python -m` / import 方式则不会;
+# 路径一律由 __file__ 解析, 与运行时 CWD 无关。本脚本仅作构建工具运行,
+# 不会被打进 Nuitka 产物, 不存在打包环境下的路径问题。
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 from markdown_it import MarkdownIt
 
 from editors_registry import EDITORS as _ALL_EDITORS
+from editor_utils.runtime_manifest import REQUIRED_RUNTIME_ARCHIVES
 
 # ═══════════════════════════════════════════════════════════════
 # 编辑器配置表 — 单一事实来源见 editors_registry.py (T5 单源化)
@@ -377,10 +386,17 @@ def _collect_source_files(entry: str, editor_dir: str) -> list:
         files.extend(editor_path.rglob("*.py"))
 
     # 构建脚本本身 (修改构建参数也应触发重建)
-    files.append(BUILD_DIR / "build_all.py")
-    files.append(BUILD_DIR / "gen_entries.py")
+    files.extend((BUILD_DIR / "build_all.py", BUILD_DIR / "gen_entries.py",
+                  BUILD_DIR / "build_runtime.py",
+                  仓库根目录 / "editor_utils" / "runtime_manifest.py"))
 
-    return [f for f in files if f.exists()]
+    # Include assets explicitly embedded by Nuitka, not just Python sources.
+    for root in (仓库根目录 / "editor_themes", 仓库根目录 / "editor_utils", editor_path):
+        if root.is_dir():
+            files.extend(path for path in root.rglob("*") if path.is_file()
+                         and path.suffix.lower() not in {".pyc", ".pyo"})
+
+    return list(dict.fromkeys(f for f in files if f.exists()))
 
 
 def _validate_editor_registry() -> None:
@@ -405,8 +421,7 @@ def _validate_editor_registry() -> None:
 
 def _validate_runtime_archives() -> None:
     """校验薄 exe 所需的运行时归档确实位于发行目录 libs/。"""
-    required = ("PySide6.lib", "QtCore.lib", "QtGui.lib", "QtWidgets.lib", "PIL.lib")
-    missing = [name for name in required if not (LIBS_DIR / name).is_file()]
+    missing = [name for name in REQUIRED_RUNTIME_ARCHIVES if not (LIBS_DIR / name).is_file()]
     if missing:
         raise RuntimeError(
             "薄模式运行时归档不完整，缺少: " + ", ".join(missing) +
@@ -592,6 +607,25 @@ def _copy_cache_cleaner(destination: Path) -> bool:
         return False
 
 
+def _validate_patch_archives(destination: Path, expected_names: set[str]) -> bool:
+    actual = {path.stem for path in destination.glob("*.tkspatch")}
+    missing = sorted(expected_names - actual)
+    if missing:
+        print("  [ERROR] 补丁发行包不完整，缺少: " + ", ".join(missing))
+        return False
+    try:
+        for path in destination.glob("*.tkspatch"):
+            with zipfile.ZipFile(path) as archive:
+                if archive.testzip() is not None:
+                    raise zipfile.BadZipFile(f"CRC 校验失败: {path.name}")
+                if "patch.json" not in archive.namelist():
+                    raise zipfile.BadZipFile(f"缺少 patch.json: {path.name}")
+    except (OSError, zipfile.BadZipFile) as exc:
+        print(f"  [ERROR] 补丁发行包校验失败: {exc}")
+        return False
+    return bool(actual)
+
+
 def _build_release_patches(destination: Path) -> bool:
     """将补丁源码构建为发行版 .tkspatch 文件。"""
     patches_src = 仓库根目录 / "tks_launcher_gui" / "patches"
@@ -610,14 +644,17 @@ def _build_release_patches(destination: Path) -> bool:
     if not source_dirs:
         for patch_file in patches_src.glob("*.tkspatch"):
             shutil.copy2(str(patch_file), str(destination / patch_file.name))
-        return bool(list(destination.glob("*.tkspatch")))
+        expected = {path.stem for path in patches_src.glob("*.tkspatch")}
+        return _validate_patch_archives(destination, expected)
 
+    expected = {patch_dir.name for patch_dir in source_dirs}
     launcher_dir = str(仓库根目录 / "tks_launcher_gui")
     if launcher_dir not in sys.path:
         sys.path.insert(0, launcher_dir)
     try:
         from patcher.build_patches import build_all_patches
-        return build_all_patches(str(patches_src), str(destination))
+        built = build_all_patches(str(patches_src), str(destination))
+        return built and _validate_patch_archives(destination, expected)
     except Exception as exc:
         print(f"  [ERROR] 补丁构建出错: {exc}")
         return False
@@ -631,7 +668,8 @@ def _copy_built_patches(destination: Path) -> bool:
     if destination.exists():
         shutil.rmtree(str(destination))
     shutil.copytree(str(source), str(destination))
-    return bool(list(destination.glob("*.tkspatch")))
+    expected = {path.stem for path in source.glob("*.tkspatch")}
+    return _validate_patch_archives(destination, expected)
 
 
 def _should_skip_build(name: str, source_files: list) -> bool:
@@ -883,7 +921,10 @@ def assemble_release(onefile: bool = False, release: bool = False,
     if patch_ok:
         print(f"  [OK] patches/ ({patch_count} 个 .tkspatch)")
     else:
-        print("  [WARN] 补丁构建失败，但不影响启动器运行")
+        raise RuntimeError("发行包补丁构建失败，已阻止生成不完整的启动器发行包")
+
+    if not onefile:
+        _validate_runtime_archives()
 
     # 复制 launcher_config.json (配置模板)
     launcher_cfg_src = 仓库根目录 / "tks_launcher_gui" / "launcher_config.json"
@@ -925,7 +966,7 @@ def assemble_release(onefile: bool = False, release: bool = False,
     _generate_build_info(onefile, release, success or [], failed or [])
 
 
-def assemble_launcher():
+def assemble_launcher(onefile: bool = False):
     """组装 TKSLauncher 玩家精简包 (TKSEditors 的子集)
 
     面向不编辑 MOD 的普通玩家, 仅保留日常使用的三个程序:
@@ -937,6 +978,19 @@ def assemble_launcher():
     print(f"\n{'='*60}")
     print(f"  组装 TKSLauncher 玩家精简包: {LAUNCHER_DIR}")
     print(f"{'='*60}")
+
+    missing_exes = [name for name in LAUNCHER_PACKAGE_EXES
+                    if not (RELEASE_DIR / f"{name}.exe").is_file()]
+    if missing_exes:
+        print("[WARN] 跳过玩家包组装，缺少必需程序: " + ", ".join(missing_exes))
+        return
+    if not _validate_patch_archives(
+            RELEASE_DIR / "patches",
+            {path.parent.name for path in
+             (仓库根目录 / "tks_launcher_gui" / "patches").glob("*/patch.json")}):
+        raise RuntimeError("玩家包缺少或包含损坏的补丁归档")
+    if not onefile:
+        _validate_runtime_archives()
 
     # 清空并重建 (确保干净, 不残留旧版文件)
     if LAUNCHER_DIR.exists():
@@ -953,11 +1007,9 @@ def assemble_launcher():
             size_mb = exe_src.stat().st_size / (1024 * 1024)
             print(f"  [OK] {name}.exe ({size_mb:.1f} MB)")
             assembled.append(f"{name}.exe")
-        else:
-            print(f"  [WARN] {name}.exe 不存在 (未构建或构建失败)")
 
-    # 2. 复制 libs/ 运行时归档 (薄 exe 必需; 完整 onefile 模式下无此目录)
-    if LIBS_DIR.is_dir():
+    # 2. 复制 libs/ 运行时归档 (薄 exe 必需; onefile 已内嵌运行时, 无需此目录)
+    if not onefile and LIBS_DIR.is_dir():
         libs_dst = LAUNCHER_DIR / "libs"
         shutil.copytree(str(LIBS_DIR), str(libs_dst), dirs_exist_ok=True)
         lib_count = sum(1 for p in libs_dst.iterdir() if p.is_file())
@@ -1180,8 +1232,9 @@ def main():
     # 组装
     if not args.no_assemble and success:
         assemble_release(args.onefile, args.release, success, failed)
-        # 额外输出 TKSLauncher 玩家精简包 (启动器 + 配置/存档编辑器)
-        assemble_launcher()
+        if not args.only:
+            # 玩家包仅在完整构建中组装；单目标构建保留已有发行包。
+            assemble_launcher(args.onefile)
 
 
 if __name__ == "__main__":

@@ -13,6 +13,7 @@
   "hook_size": 14,
   "hook_expect_count": 1,
   "fallback_rva": "0x418F8",
+  "compatible_overlaps": ["summon_exp_jp_accumulation_fix"],
   "cave_template": "trap_exp_jp_personal_fix",
   "cave_code": "0F BF 4D 08 83 F9 06 72 01 C3 8B 45 B8 01 04 8D 20 6F 9D 00 C3",
   "format": "TKSPATCH",

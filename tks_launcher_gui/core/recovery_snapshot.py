@@ -54,7 +54,22 @@ def finish_snapshot(launcher_dir: str, task_id: str) -> bool:
 def load_snapshot(launcher_dir: str) -> RecoverySnapshot | None:
     path = snapshot_path(launcher_dir)
     if not os.path.isfile(path):
-        return None
+        # 首次写入在 os.replace 前被打断时, 主文件缺失但 .tmp 已完整落盘,
+        # 提升它以避免恢复任务被静默丢弃。
+        tmp = path + ".tmp"
+        if os.path.isfile(tmp):
+            try:
+                with open(tmp, "r", encoding="utf-8") as handle:
+                    raw = json.load(handle)
+                if raw.get("status") == "active":
+                    try:
+                        os.replace(tmp, path)
+                    except OSError:
+                        pass
+            except (OSError, json.JSONDecodeError):
+                return None
+        if not os.path.isfile(path):
+            return None
     try:
         with open(path, "r", encoding="utf-8") as handle:
             raw = json.load(handle)
@@ -75,26 +90,67 @@ def recover_game_directory(game_dir: str, log_func=None) -> bool:
     """恢复启动器留下的 MOD/TKS.exe/辅助工具备份。"""
     log = log_func or (lambda _message: None)
     ok = True
+    for root, _dirs, files in os.walk(game_dir):
+        for filename in files:
+            if filename.endswith(".toolbak"):
+                backup = os.path.join(root, filename)
+                target = backup[:-len(".toolbak")]
+                try:
+                    shutil.copy2(backup, target)
+                    os.remove(backup)
+                    log(f"恢复辅助工具文件: {os.path.relpath(target, game_dir)}")
+                except OSError as exc:
+                    log(f"恢复辅助工具文件失败: {target}: {exc}")
+                    ok = False
+            elif filename.endswith(".toolnew"):
+                marker = os.path.join(root, filename)
+                target = marker[:-len(".toolnew")]
+                try:
+                    if os.path.isfile(target):
+                        os.remove(target)
+                    os.remove(marker)
+                    log(f"清理注入的辅助工具文件: {os.path.relpath(target, game_dir)}")
+                except OSError as exc:
+                    log(f"清理 {target} 失败: {exc}")
+                    ok = False
+
     try:
         from .mod_loader import restore_originals
         restore_originals(game_dir, log_func=log)
     except Exception as exc:
         log(f"恢复 MOD 文件失败: {exc}")
         ok = False
+    # restore_originals 对单文件失败只记日志; 这里以残留备份判断真实成败,
+    # 残留意味着本次未恢复完, 必须保留快照供下次启动重试。
+    leftover = [name for _root, _dirs, names in os.walk(game_dir)
+                for name in names if name.endswith((".mod_orig", ".mod_new"))]
+    if leftover:
+        log(f"仍有 {len(leftover)} 个 MOD 备份未恢复，保留快照供下次启动重试")
+        ok = False
 
-    for root, _dirs, files in os.walk(game_dir):
-        for filename in files:
-            if not filename.endswith(".toolbak"):
-                continue
-            backup = os.path.join(root, filename)
-            target = backup[:-len(".toolbak")]
-            try:
-                shutil.copy2(backup, target)
-                os.remove(backup)
-                log(f"恢复辅助工具文件: {os.path.relpath(target, game_dir)}")
-            except OSError as exc:
-                log(f"恢复辅助工具文件失败: {target}: {exc}")
-                ok = False
+    expanded = os.path.join(game_dir, "TKAct.dat.expanded")
+    target = os.path.join(game_dir, "TKAct.dat")
+    restore_tmp = target + ".restore.tmp"
+    try:
+        if os.path.isfile(expanded):
+            with open(expanded, "rb") as source, open(restore_tmp, "wb") as output:
+                shutil.copyfileobj(source, output)
+                output.flush()
+                os.fsync(output.fileno())
+            os.replace(restore_tmp, target)
+            os.remove(expanded)
+            log("恢复扩展版 TKAct.dat")
+        elif os.path.isfile(restore_tmp):
+            os.replace(restore_tmp, target)
+            log("完成 TKAct.dat 原子恢复")
+    except OSError as exc:
+        ok = False
+        log(f"恢复 TKAct.dat 失败: {exc}")
+        try:
+            os.remove(restore_tmp)
+        except OSError:
+            pass
+
     tks_backup = os.path.join(game_dir, "TKS.exe.mod_orig")
     tks_target = os.path.join(game_dir, "TKS.exe")
     if os.path.isfile(tks_backup):
@@ -121,7 +177,8 @@ def _build_manifest(game_dir: str) -> dict[str, str]:
     result: dict[str, str] = {}
     if not os.path.isdir(game_dir):
         return result
-    candidates = [os.path.join(game_dir, "TKS.exe")]
+    candidates = [os.path.join(game_dir, "TKS.exe"),
+                  os.path.join(game_dir, "TKAct.dat")]
     for root, _dirs, files in os.walk(game_dir):
         for filename in files:
             if filename.endswith((".mod_orig", ".mod_new", ".toolbak", ".orig")):
@@ -143,4 +200,6 @@ def _write(path: str, snapshot: RecoverySnapshot) -> None:
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as handle:
         json.dump(asdict(snapshot), handle, ensure_ascii=False, indent=2)
+        handle.flush()
+        os.fsync(handle.fileno())
     os.replace(tmp, path)

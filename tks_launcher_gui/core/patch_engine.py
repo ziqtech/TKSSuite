@@ -16,6 +16,7 @@ from .memory import (
     _OpenProcess, _CloseHandle, _VirtualAllocEx,
 )
 from .scanner import (
+    encode_call_rel32,
     overlaps_rel32_jcc,
     parse_pattern,
     pattern_scan,
@@ -33,6 +34,9 @@ from .config_loader import (
 from .patch_plan import (
     PatchPlanError, build_patch_plan, protected_operation_ids, validate_runtime_plan,
 )
+
+
+_encode_call_rel32 = encode_call_rel32  # 兼容既有内部命名
 
 
 def _check_cave_bounds(cave_addr: int, offset: int, size: int, budget: int,
@@ -720,8 +724,7 @@ def _resolve_sites_writes(defn: PatchDef, cave_base: int,
                 raise ValueError(f"{tag}: cave 入口 '{ref}' 未声明")
             target = cave_base + int(entries[ref])
             site_abs = code_start_addr + (rva - 0x1000)
-            rel = (target - (site_abs + 5)) & 0xFFFFFFFF
-            repl = b'\xE8' + struct.pack('<I', rel)
+            repl = _encode_call_rel32(site_abs, target, tag)
             repl += b'\x90' * (len(expect) - len(repl))
             if len(repl) != len(expect):
                 raise ValueError(f"{tag}: E8+NOP ({len(repl)}B) 与 expect ({len(expect)}B) 不等长")
@@ -1111,10 +1114,14 @@ def _apply_fixed_layout_cave(defn: PatchDef, ctx: PatchContext) -> bool:
         ct = cave_addr + entry
         for off in hits:
             ha = ctx.code_start_addr + off
-            rel = (ct - (ha + 5)) & 0xFFFFFFFF
+            try:
+                call_bytes = _encode_call_rel32(ha, ct, hook.get("name", "?"))
+            except ValueError as e:
+                log(f"  [ERROR] hook {hook.get('name', '?')}: {e}")
+                all_ok = False
+                continue
             ci = bytearray(hsize)
-            ci[0] = 0xE8
-            ci[1:5] = struct.pack("<I", rel)
+            ci[:5] = call_bytes
             for i in range(5, hsize):
                 ci[i] = 0x90
             op = vp_ex(ctx.h_proc, ha, hsize, PAGE_EXECUTE_READWRITE)
@@ -1144,15 +1151,21 @@ def _apply_fixed_layout_cave(defn: PatchDef, ctx: PatchContext) -> bool:
             else:
                 replace[int(k)] = int(v)
         for off in hits:
-            for ro, bv in replace.items():
+            for ro, value in replace.items():
                 idx = off + ro
-                if 0 <= idx < len(ctx.code_buf):
-                    ctx.code_buf[idx] = bv & 0xFF
-            abs_addr = ctx.code_start_addr + off
-            op = vp_ex(ctx.h_proc, abs_addr, len(pat), PAGE_EXECUTE_READWRITE)
-            write_pm(ctx.h_proc, abs_addr, bytes(ctx.code_buf[off:off + len(pat)]))
-            vp_ex(ctx.h_proc, abs_addr, len(pat), op)
-            log(f"  [OK] bytes_patch @0x{abs_addr:08X}")
+                if not 0 <= idx < len(ctx.code_buf):
+                    all_ok = False
+                    continue
+                abs_addr = ctx.code_start_addr + idx
+                op = vp_ex(ctx.h_proc, abs_addr, 1, PAGE_EXECUTE_READWRITE)
+                written = write_pm(ctx.h_proc, abs_addr, bytes([value & 0xFF]))
+                vp_ex(ctx.h_proc, abs_addr, 1, op)
+                if written != 1:
+                    log(f"  [FAIL] bytes_patch 写入失败 @0x{abs_addr:08X}")
+                    all_ok = False
+                    continue
+                ctx.code_buf[idx] = value & 0xFF
+            log(f"  [OK] bytes_patch @RVA 0x{off:X}")
 
     return all_ok
 
@@ -1373,22 +1386,30 @@ def _apply_patch_data_expand(defn: PatchDef, ctx: PatchContext) -> bool:
                     log(f"  [FAIL] 辅助数组地址偏移越界 @0x{value_off:X}")
                     all_ok = False
                     continue
-                blob = bytes(code[off:off + len(pat)])
-                payload = bytearray(blob)
                 for key, value in replace.items():
                     ro = int(key)
-                    if 0 <= ro < len(payload):
-                        payload[ro] = int(value) & 0xFF
-                payload[aux_offset:aux_offset + 4] = i32b(aux_base)
-                abs_addr = start + off
-                op = vp_ex(hp, abs_addr, len(payload), PAGE_EXECUTE_READWRITE)
-                wr = write_pm(hp, abs_addr, bytes(payload))
-                vp_ex(hp, abs_addr, len(payload), op)
-                if wr != len(payload):
-                    log(f"  [FAIL] 辅助数组补丁写入失败 @0x{abs_addr:08X}")
+                    if not 0 <= ro < len(pat):
+                        continue
+                    idx = off + ro
+                    abs_addr = start + idx
+                    op = vp_ex(hp, abs_addr, 1, PAGE_EXECUTE_READWRITE)
+                    wr = write_pm(hp, abs_addr, bytes([int(value) & 0xFF]))
+                    vp_ex(hp, abs_addr, 1, op)
+                    if wr != 1:
+                        log(f"  [FAIL] 辅助数组补丁写入失败 @0x{abs_addr:08X}")
+                        all_ok = False
+                    else:
+                        code[idx] = int(value) & 0xFF
+                aux_address = i32b(aux_base)
+                abs_addr = start + value_off
+                op = vp_ex(hp, abs_addr, 4, PAGE_EXECUTE_READWRITE)
+                wr = write_pm(hp, abs_addr, aux_address)
+                vp_ex(hp, abs_addr, 4, op)
+                if wr != 4:
+                    log(f"  [FAIL] 辅助数组地址写入失败 @0x{abs_addr:08X}")
                     all_ok = False
                     continue
-                code[off:off + len(payload)] = payload
+                code[value_off:value_off + 4] = aux_address
                 log(f"    [OK] 辅助数组引用 @0x{abs_addr:08X}")
     return all_ok
 
@@ -1449,10 +1470,13 @@ def apply_cave_hook(defn: PatchDef, hits: List[int], code_buf: bytearray,
             log(f"  [FAIL] {defn.id}: hook 写入越界 (RVA 0x{hook_off:X}, size={defn.hook_size})")
             return False
         ha = code_start_addr + hook_off
-        co = (ct - (ha + 5)) & 0xFFFFFFFF
+        try:
+            call_bytes = _encode_call_rel32(ha, ct, defn.id)
+        except ValueError as e:
+            log(f"  [FAIL] {defn.id}: {e}")
+            return False
         ci = bytearray(defn.hook_size)
-        ci[0] = 0xE8
-        ci[1:5] = struct.pack('<I', co)
+        ci[:5] = call_bytes
         for i in range(5, defn.hook_size):
             ci[i] = 0x90
 
@@ -1770,10 +1794,13 @@ def _write_cave_and_hook(cave_template: Optional[bytes], cave_offset: int, entry
     hsz = hook_size
     for off in hits:
         ha = code_start_addr + off
-        co = (hook_target - (ha + 5)) & 0xFFFFFFFF
+        try:
+            call_bytes = _encode_call_rel32(ha, hook_target, tag)
+        except ValueError as e:
+            log(f"  [FAIL] [{tag}] {e}")
+            return False
         ci = bytearray(hsz)
-        ci[0] = 0xE8
-        ci[1:5] = i32b(co)
+        ci[:5] = call_bytes
         for i in range(5, hsz):
             ci[i] = 0x90
         op = vp_ex(h_proc, ha, hsz, PAGE_EXECUTE_READWRITE)
@@ -1982,10 +2009,13 @@ def apply_exp_lock(defn: PatchDef, code_buf: bytearray, code_start_addr: int,
     # 5. 安装 hook (E8 rel32 + NOP 填充)
     off = hits[0]
     ha = code_start_addr + off
-    co = (ct - (ha + 5)) & 0xFFFFFFFF
+    try:
+        call_bytes = _encode_call_rel32(ha, ct, defn.id)
+    except ValueError as e:
+        log(f"    [FAIL] {defn.id}: {e}")
+        return False
     ci = bytearray(defn.hook_size)
-    ci[0] = 0xE8
-    ci[1:5] = i32b(co)
+    ci[:5] = call_bytes
     for i in range(5, defn.hook_size):
         ci[i] = 0x90
     op = vp_ex(h_proc, ha, defn.hook_size, PAGE_EXECUTE_READWRITE)
@@ -2633,7 +2663,10 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
                                     disabled=disabled_patches, log_func=log)
         except ValueError as exc:
             raise PatchPlanError(str(exc)) from exc
-    validate_runtime_plan(plan, code_buf, exe_profile)
+    validate_runtime_plan(plan, code_buf, exe_profile,
+                          config_overrides=config_overrides,
+                          code_start_addr=code_start_addr,
+                          base_addr=base_addr)
     effective = plan.effective
     protected_ids = protected_operation_ids(plan)
     if effective.superseded:

@@ -18,7 +18,11 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 from .memory import rebase_globals
-from .scanner import overlaps_rel32_jcc, value_scan_excluding_rel32
+from .scanner import (
+    encode_call_rel32,
+    overlaps_rel32_jcc,
+    value_scan_excluding_rel32,
+)
 
 
 # ============================================================
@@ -456,7 +460,13 @@ class ExeBuilder:
                     return
                 target = cave_base + item.cave_entries[ref]
                 site_abs = pe.image_base + rva
-                repl = b'\xE8' + struct.pack('<i', (target - (site_abs + 5)) & 0xFFFFFFFF)
+                try:
+                    repl = encode_call_rel32(site_abs, target,
+                                             f'{item.patch_id}/{tag}')
+                except ValueError as exc:
+                    result.error = f'[{item.patch_id}] {tag}: {exc}'
+                    log.append(result.error)
+                    return
                 repl += b'\x90' * (len(expect) - len(repl))
                 if len(repl) != len(expect):
                     result.error = (f'[{item.patch_id}] {tag}: '
@@ -1371,8 +1381,14 @@ class ExeBuilder:
                         return result
                 hook_rva = offset_to_rva(pe, hook_off)
                 cave_target_rva = test_rva + entry_rel
-                rel32 = cave_target_rva - (hook_rva + 5)
-                call = b'\xE8' + struct.pack('<i', rel32)
+                try:
+                    call = encode_call_rel32(hook_rva, cave_target_rva,
+                                             f'{owner.patch_id}/{label}')
+                except ValueError as exc:
+                    # 差值与 image_base 无关, 直接以 RVA 判定可达性
+                    result.error = f'[{owner.patch_id}] {label}: {exc}'
+                    log.append(result.error)
+                    return result
                 patch = call + b'\x90' * (hsize - 5)
                 data[hook_off:hook_off + hsize] = patch
                 log.append(f'[{owner.patch_id}/{label}] hook 0x{hook_off:X}: '

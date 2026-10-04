@@ -1,7 +1,7 @@
 {
   "_format": 1,
   "_group": "── WarPC 扩容 ──",
-  "_comment": "WarPC.dat 基址引用重定位. 文件级: type=patch_data_expand, 解压后数据作为新 PE 节并重定向 0x757F08 引用. 运行时: 由 warpc_expander 统一处理, 本补丁在运行时跳过. 仅当 WarPC.dat 实际大于原版时生效.",
+  "_comment": "WarPC.dat 基址引用重定位. 文件级: type=patch_data_expand, 解压后数据作为新 PE 节并重定向 0x757F08 引用. 运行时: 经 _apply_patch_data_expand 复用启动器预分配的 WarPC 缓冲区 (reuse_warpc), 将 0x757F08 基址引用与 150722 大小引用重定向到实际缓冲; WarPC 未扩容时写回原值, 幂等. 仅当 WarPC.dat 实际大于原版时产生有效差异.",
   "type": "patch_data_expand",
   "id": "warpc_base_refs",
   "name": "武将数据重定位",
@@ -17,6 +17,7 @@
   "format": "TKSPATCH",
   "format_version": 1,
   "buffer_cap": 527000,
+  "compatible_overlaps": ["warpc_size_refs"],
   "bytes_patches": [
     {
       "_comment": "WarPC 扩容后 sub_404024 会读取 tmp.dat 并用 sub_452B14 把未定长数据解压进启动器注入的 WarPC 缓冲区, 竞态下越界写触发访问违例。只 NOP 这一条 call 0x452B14 (E8 49 EA 04 00), 保留 fopen/fread/malloc 之后的 free/fclose 与删除 tmp.dat 的正常返回, 使异步写回/回读握手照常完成。切勿改整函数入口置空, 否则 tmp.dat 不被消费会导致进入游戏卡死。",

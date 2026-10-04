@@ -111,8 +111,10 @@ class PatcherWorker(QThread):
         if not exe_dir:
             exe_dir = os.getcwd()
         self._launcher_dir = exe_dir
-        self._recovery_task_id = begin_snapshot(
-            exe_dir, self.game_dir or os.path.dirname(self.exe_path), self.exe_path)
+        # game_dir 未显式提供时统一落到 exe 所在目录, 与恢复快照、Popen cwd
+        # 保持一致; 否则快照记录目录与 TKAct/MOD 等 cwd 相对操作会各指一方。
+        game_dir = self.game_dir or os.path.dirname(self.exe_path) or os.getcwd()
+        self._recovery_task_id = begin_snapshot(exe_dir, game_dir, self.exe_path)
 
         self._log(f"启动器目录: {exe_dir}")
         self._log(f"工作目录: {os.getcwd()}")
@@ -125,7 +127,7 @@ class PatcherWorker(QThread):
         pipeline_cfg = PipelineConfig(
             exe_path=self.exe_path,
             exe_dir=exe_dir,
-            game_dir=self.game_dir,
+            game_dir=game_dir,
             selected_patches=self.selected_patches,
             enabled_mod_ids=self.enabled_mod_ids,
             mode=self.mode,
@@ -145,25 +147,24 @@ class PatcherWorker(QThread):
         # ── Phase 1: 启动前准备 (config/MOD/WarPC/TKAct 截断) ──
         pre = pipeline.run_pre_launch()
         if pre.error:
-            finish_snapshot(self._launcher_dir, self._recovery_task_id)
+            self._finish_snapshot_if_clean(pipeline)
             self.finished.emit(False, pre.as_dict())
             return
 
         # ── GUI 特有: TKS.exe MOD 替换 ──
         _tks_exe_replaced = self._maybe_replace_tks_exe(
             pipeline.loaded_mods,
-            game_dir=self.game_dir or os.getcwd(),
+            game_dir=game_dir,
         )
         if self._tks_exe_conflict:
             pipeline.cleanup()
-            self._restore_tks_exe(self.game_dir or os.getcwd())
-            finish_snapshot(self._launcher_dir, self._recovery_task_id)
+            tks_ok = self._restore_tks_exe(game_dir)
+            self._finish_snapshot_if_clean(pipeline, tks_ok)
             self._log("启动已取消：请只保留一个 TKS.exe 替换 MOD")
             self.finished.emit(False, {"error": "multiple TKS.exe replacement mods"})
             return
 
         # ── GUI 特有: 辅助工具注入 ──
-        game_dir = self.game_dir or os.getcwd()
         self._inject_tool_files(exe_dir, game_dir)
         # 注入后必须确认文件真正落盘/释放再启动游戏: 复制与进程创建紧邻时,
         # 杀软扫描/写回延迟会让游戏加载到不完整或未生效的 ddraw.dll,
@@ -181,9 +182,9 @@ class PatcherWorker(QThread):
             )
         except Exception as e:
             pipeline.cleanup()
-            self._remove_tool_files(self.game_dir or os.getcwd())
-            self._restore_tks_exe(self.game_dir or os.getcwd())
-            finish_snapshot(self._launcher_dir, self._recovery_task_id)
+            tools_ok = self._remove_tool_files(game_dir)
+            tks_ok = self._restore_tks_exe(game_dir)
+            self._finish_snapshot_if_clean(pipeline, tools_ok and tks_ok)
             self._log(f"[ERROR] 无法启动 {tks_path}: {e}")
             self.finished.emit(False, {"error": f"launch failed: {e}"})
             return
@@ -196,9 +197,9 @@ class PatcherWorker(QThread):
             self._log("兼容模式: 已跳过目标进程检测和内存补丁")
             pipeline.wait_game_exit(tks_proc, 0)
             pipeline.cleanup()
-            self._remove_tool_files(self.game_dir or os.getcwd())
-            self._restore_tks_exe(self.game_dir or os.getcwd())
-            finish_snapshot(self._launcher_dir, self._recovery_task_id)
+            tools_ok = self._remove_tool_files(game_dir)
+            tks_ok = self._restore_tks_exe(game_dir)
+            self._finish_snapshot_if_clean(pipeline, tools_ok and tks_ok)
             self.finished.emit(True, pipeline.result.as_dict())
             return
         self._status("正在应用游戏功能...", True)
@@ -210,9 +211,9 @@ class PatcherWorker(QThread):
             )
         if target_pid == 0:
             pipeline.cleanup()
-            self._remove_tool_files(self.game_dir or os.getcwd())
-            self._restore_tks_exe(self.game_dir or os.getcwd())
-            finish_snapshot(self._launcher_dir, self._recovery_task_id)
+            tools_ok = self._remove_tool_files(game_dir)
+            tks_ok = self._restore_tks_exe(game_dir)
+            self._finish_snapshot_if_clean(pipeline, tools_ok and tks_ok)
             self.finished.emit(False, {"error": "no target process"})
             return
 
@@ -268,9 +269,9 @@ class PatcherWorker(QThread):
 
         # ── 收尾 ──
         pipeline.cleanup()
-        self._remove_tool_files(self.game_dir or os.getcwd())
-        self._restore_tks_exe(self.game_dir or os.getcwd())
-        finish_snapshot(self._launcher_dir, self._recovery_task_id)
+        tools_ok = self._remove_tool_files(game_dir)
+        tks_ok = self._restore_tks_exe(game_dir)
+        self._finish_snapshot_if_clean(pipeline, tools_ok and tks_ok)
 
         self.finished.emit(result.success, result.as_dict())
 
@@ -486,23 +487,35 @@ class PatcherWorker(QThread):
             self._log(f"  [ERROR] TKS.exe 替换失败: {e}")
             return False
 
-    def _restore_tks_exe(self, game_dir: str):
-        """恢复本次启动替换的 TKS.exe，避免第三方 EXE 永久留在游戏目录。"""
+    def _restore_tks_exe(self, game_dir: str) -> bool:
+        """恢复本次启动替换的 TKS.exe，避免第三方 EXE 永久留在游戏目录。
+
+        备份缺失属正常 (pipeline.cleanup 的 restore_originals 已统一恢复)。
+        返回 False 仅表示恢复动作本身出错，需保留恢复快照供下次处理。
+        """
         if not self._tks_exe_replaced:
-            return
+            return True
         target = os.path.join(game_dir, "TKS.exe")
         backup = target + ".mod_orig"
+        restored = True
         try:
             if os.path.isfile(backup):
                 shutil.copy2(backup, target)
                 os.remove(backup)
                 self._log("已恢复原版 TKS.exe")
-            else:
-                self._log("[WARN] 找不到 TKS.exe 备份，无法自动恢复")
         except Exception as e:
             self._log(f"[WARN] 恢复 TKS.exe 失败: {e}")
+            restored = False
         finally:
             self._tks_exe_replaced = False
+        return restored
+
+    def _finish_snapshot_if_clean(self, pipeline, ok: bool = True):
+        """仅当清理完全成功时销毁恢复快照；否则保留给下次启动重试。"""
+        if pipeline.result.cleanup_status == "failed" or not ok:
+            self._log("[WARN] 部分文件未能自动恢复，保留恢复快照供下次启动处理")
+            return
+        finish_snapshot(self._launcher_dir, self._recovery_task_id)
 
     def stop(self):
         self._is_running = False
@@ -548,6 +561,12 @@ class PatcherWorker(QThread):
                         shutil.copy2(dst_file, bak)
                     except Exception as e:
                         self._log(f"  [WARN] 备份 {rel_path} 失败: {e}")
+                else:
+                    # 新文件落 .toolnew 标记: 进程中途被杀时恢复快照仍能清理。
+                    try:
+                        open(dst_file + ".toolnew", "wb").close()
+                    except OSError as e:
+                        self._log(f"  [WARN] 新文件标记 {rel_path} 失败: {e}")
                 self._tool_injected_files[rel_path] = is_new
 
                 try:
@@ -599,13 +618,17 @@ class PatcherWorker(QThread):
         time.sleep(0.6)
         self._log(f"  辅助工具已就绪 ({len(files)} 个文件, ddraw.dll 已落盘)")
 
-    def _remove_tool_files(self, game_dir: str):
-        """游戏退出后，移除辅助工具注入的文件（恢复被覆盖的文件，删除新建的文件）。"""
+    def _remove_tool_files(self, game_dir: str) -> bool:
+        """游戏退出后，移除辅助工具注入的文件（恢复被覆盖的文件，删除新建的文件）。
+
+        返回是否全部清理成功; 失败时调用方应保留恢复快照。
+        """
         if not self._tool_injected_files:
-            return
+            return True
 
         self._log(f"\n=== 清理辅助工具文件 ===")
         removed = 0
+        ok = True
         restored_dirs: set[str] = set()
 
         for rel_path, is_new in self._tool_injected_files.items():
@@ -618,6 +641,14 @@ class PatcherWorker(QThread):
                         self._log(f"  [删除] {rel_path}")
                     except Exception as e:
                         self._log(f"  [ERROR] 删除 {rel_path} 失败: {e}")
+                        ok = False
+                marker = dst_file + ".toolnew"
+                if os.path.isfile(marker):
+                    try:
+                        os.remove(marker)
+                    except OSError as e:
+                        self._log(f"  [ERROR] 清理新文件标记 {rel_path} 失败: {e}")
+                        ok = False
             else:
                 bak = dst_file + ".toolbak"
                 if os.path.isfile(bak):
@@ -628,6 +659,7 @@ class PatcherWorker(QThread):
                         self._log(f"  [恢复] {rel_path}")
                     except Exception as e:
                         self._log(f"  [ERROR] 恢复 {rel_path} 失败: {e}")
+                        ok = False
             rel_dir = os.path.dirname(rel_path)
             if rel_dir:
                 restored_dirs.add(rel_dir)
@@ -644,3 +676,4 @@ class PatcherWorker(QThread):
 
         self._log(f"  共清理 {removed} 个文件")
         self._tool_injected_files.clear()
+        return ok

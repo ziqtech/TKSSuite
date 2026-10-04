@@ -254,16 +254,13 @@ if _is_system_temp_path(_CACHE_DIR):
 # manifest 文件 (记录已解压归档的状态 + 文件列表, 用于增量清理)
 _MANIFEST = os.path.join(_CACHE_DIR, ".manifest.json")
 
-# 需要加载的归档列表 (按依赖顺序)
-_RUNTIME_LIBS = [
-    "PySide6.lib",
-    "QtCore.lib",
-    "QtGui.lib",
-    "QtWidgets.lib",
-    "QtSvg.lib",
-    "QtMultimedia.lib",
-    "PIL.lib",
-]
+from .runtime_manifest import (
+    REQUIRED_RUNTIME_ARCHIVES,
+    REQUIRED_RUNTIME_MEMBERS,
+    RUNTIME_ARCHIVES,
+)
+
+_RUNTIME_LIBS = list(RUNTIME_ARCHIVES)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -376,15 +373,17 @@ def bootstrap():
     if not is_compiled:
         return
 
-    # 薄 exe 必须从 exe 同级 libs/ 读取归档。若 libs 目录存在但缺少核心归档，
-    # 不要静默跳过后再让 PySide6 导入报一个难以定位的错误。
-    libs_dir = os.path.join(_APP_DIR, "libs")
-    if os.path.isdir(libs_dir):
-        core_lib = os.path.join(libs_dir, "PySide6.lib")
-        if not os.path.isfile(core_lib):
+    # 薄 exe 必须从 exe 同级 libs/ 读取归档。若归档缺失，不要静默跳过后
+    # 再让 PySide6 导入报一个难以定位的错误。onefile 已内嵌 PySide6/PIL，
+    # 由 Nuitka 引导设置的 NUITKA_ONEFILE_PARENT 识别，不做此检查。
+    if not os.environ.get("NUITKA_ONEFILE_PARENT"):
+        libs_dir = os.path.join(_APP_DIR, "libs")
+        missing = [name for name in REQUIRED_RUNTIME_ARCHIVES
+                   if not os.path.isfile(os.path.join(libs_dir, name))]
+        if missing:
             raise RuntimeError(
-                "TKS Editors 运行时归档不完整，缺少 libs/PySide6.lib。\n"
-                f"请将 libs 目录放在程序同级目录: {_APP_DIR}"
+                "TKS Editors 运行时归档不完整，缺少: " + ", ".join(missing) + "。\n"
+                f"请将完整 libs 目录放在程序同级目录: {_APP_DIR}"
             )
 
     # ── 确保缓存目录存在 ──
@@ -405,6 +404,16 @@ def bootstrap():
     _SENTINEL = os.path.join(_CACHE_DIR, "PySide6", "__init__.py")
     if manifest and not os.path.isfile(_SENTINEL):
         manifest = {}  # 清空 manifest, 触发全量重新解压
+    for lib_name, members in REQUIRED_RUNTIME_MEMBERS.items():
+        lib_path = os.path.join(_LIBS_DIR, lib_name)
+        if not os.path.isfile(lib_path):
+            continue
+        cached_files = set((manifest.get(lib_name) or {}).get("files", []))
+        missing_cached = [name for name in members
+                          if name not in cached_files
+                          or not os.path.isfile(os.path.join(_CACHE_DIR, name.replace("/", os.sep)))]
+        if missing_cached:
+            manifest.pop(lib_name, None)
 
     # ── 检查并解压有变化的归档 ──
     # 缓存校验策略 (分层):

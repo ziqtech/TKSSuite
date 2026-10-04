@@ -23,6 +23,14 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
+# 仓库根目录由 __file__ 解析, 与运行时 CWD 无关; 脚本目录同时补齐以兼容
+# `python -m` / import 调用 (仅直接执行时解释器才会自动加入脚本目录)。
+# 本脚本仅作构建工具运行, 不会被打进 Nuitka 产物。
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from editor_utils.runtime_manifest import REQUIRED_RUNTIME_ARCHIVES, REQUIRED_RUNTIME_MEMBERS
+
 try:
     import zstandard
 except ImportError:
@@ -143,6 +151,10 @@ ARCHIVES = {
 # 构建逻辑
 # ═══════════════════════════════════════════════════════════════
 
+for _name, _spec in ARCHIVES.items():
+    _spec["archive_name"] = _name
+
+
 def _collect_archive_entries(spec: dict) -> list:
     """收集归档中所有 (source_path, arcname) 条目
 
@@ -170,13 +182,17 @@ def _collect_archive_entries(spec: dict) -> list:
                     entries.append((item, arcname))
 
         # 3. 包含指定的 PySide6 文件 (dll/pyd)
+        required = set(REQUIRED_RUNTIME_MEMBERS.get(spec.get("archive_name", ""), ()))
         for filename in spec.get("pyside6_files", []):
             filepath = pyside6_dir / filename
+            arcname = "PySide6/" + filename
             if filepath.exists():
-                arcname = "PySide6/" + filename
                 entries.append((filepath, arcname))
             else:
-                print(f"    [WARN] 文件不存在: {filepath}")
+                message = "ERROR" if arcname in required else "WARN"
+                print(f"    [{message}] 文件不存在: {filepath}")
+                if arcname in required:
+                    raise FileNotFoundError(filepath)
 
         # 4. 包含 PySide6 插件子目录
         for plugin_dir_name in spec.get("pyside6_plugins", []):
@@ -207,19 +223,26 @@ def _collect_archive_entries(spec: dict) -> list:
                 entries.append((dll_path, dll_name))
                 print(f"    [OK] 包含 {dll_name} ({dll_path})")
             else:
-                print(f"    [WARN] {dll_name} 不存在: {dll_path}")
+                print(f"    [ERROR] {dll_name} 不存在: {dll_path}")
+                raise FileNotFoundError(dll_path)
 
     return entries
 
 
 def build_archive(name: str, spec: dict, output_dir: Path, force: bool = False) -> Path:
     """构建单个归档 (zstd 压缩的 tar)"""
+    spec["archive_name"] = name
     output_path = output_dir / name
 
     print(f"\n  构建: {name}")
     print(f"  描述: {spec.get('description', '')}")
 
     entries = _collect_archive_entries(spec)
+    required = set(REQUIRED_RUNTIME_MEMBERS.get(name, ()))
+    present = {arcname for _source, arcname in entries}
+    missing = sorted(required - present)
+    if missing:
+        raise RuntimeError(f"{name} 缺少必需输入文件: {', '.join(missing)}")
     file_count = len(entries)
     total_size = sum(src.stat().st_size for src, _ in entries)
 
@@ -228,7 +251,10 @@ def build_archive(name: str, spec: dict, output_dir: Path, force: bool = False) 
         lib_mtime = output_path.stat().st_mtime
         script_mtime = (BUILD_DIR / "build_runtime.py").stat().st_mtime
         newest_src = max([script_mtime] + [src.stat().st_mtime for src, _ in entries])
+        manifest_mtime = (AI_PROGRAMS / "editor_utils" / "runtime_manifest.py").stat().st_mtime
+        newest_src = max(newest_src, manifest_mtime)
         if lib_mtime >= newest_src:
+            validate_archive(output_path, name)
             size_mb = output_path.stat().st_size / 1024 / 1024
             print(f"    [SKIP] {name} ({size_mb:.1f} MB, 源未变更)")
             return output_path
@@ -248,8 +274,19 @@ def build_archive(name: str, spec: dict, output_dir: Path, force: bool = False) 
     print(f"    文件数: {file_count}")
     print(f"    原始大小: {total_size / 1024 / 1024:.1f} MB")
     print(f"    压缩大小: {compressed_size / 1024 / 1024:.1f} MB ({ratio:.0f}%)")
+    validate_archive(output_path, name)
 
     return output_path
+
+
+def validate_archive(path: Path, name: str) -> None:
+    with path.open("rb") as stream:
+        reader = zstandard.ZstdDecompressor().stream_reader(stream)
+        with tarfile.open(fileobj=reader, mode="r|") as archive:
+            members = {member.name for member in archive if member.isfile()}
+    missing = sorted(set(REQUIRED_RUNTIME_MEMBERS.get(name, ())) - members)
+    if missing:
+        raise RuntimeError(f"{name} 缺少必需归档成员: {', '.join(missing)}")
 
 
 def build_archive_parallel(output_dir: Path, force: bool = False) -> list:
@@ -305,13 +342,34 @@ def main():
             print(f"\n  [ERROR] 未知归档: {key}")
             print(f"  可用: {', '.join(ARCHIVES.keys())}")
             sys.exit(1)
-        build_archive(key, ARCHIVES[key], output_dir, args.force)
+        try:
+            build_archive(key, ARCHIVES[key], output_dir, args.force)
+        except Exception as exc:
+            print(f"\n  [ERROR] {key} 构建失败: {exc}")
+            sys.exit(1)
     elif args.no_parallel:
-        for name, spec in ARCHIVES.items():
-            build_archive(name, spec, output_dir, args.force)
+        try:
+            for name, spec in ARCHIVES.items():
+                build_archive(name, spec, output_dir, args.force)
+        except Exception as exc:
+            print(f"\n  [ERROR] 运行时归档构建失败: {exc}")
+            sys.exit(1)
     else:
         print(f"\n  并行构建 {len(ARCHIVES)} 个归档...")
-        build_archive_parallel(output_dir, args.force)
+        results = build_archive_parallel(output_dir, args.force)
+        failures = [name for name, path in results if path is None]
+        if failures:
+            print(f"\n  [ERROR] 运行时归档构建失败: {', '.join(failures)}")
+            sys.exit(1)
+
+    # --only 单归档构建只要求该归档存在; 全量构建要求全部必需归档齐备。
+    required_names = ([args.only if args.only.endswith(".lib") else args.only + ".lib"]
+                      if args.only else list(REQUIRED_RUNTIME_ARCHIVES))
+    missing = [name for name in required_names
+               if not (output_dir / name).is_file()]
+    if missing:
+        print("\n  [ERROR] 缺少必需运行时归档: " + ", ".join(missing))
+        sys.exit(1)
 
     elapsed = time.time() - t0
     print(f"\n{'=' * 60}")

@@ -220,6 +220,7 @@ _TKSPATCH_SCHEMA = {
         # bundle 清单及通用操作链接元数据
         "prepare_file", "baseline", "internal", "migrate_from", "options", "resources",
         "link_group", "link_size", "cave_fragments", "owners", "redirect_size", "data_path",
+        "compatible_overlaps",
     ],
     "types": {
         "type": str,
@@ -300,6 +301,7 @@ _TKSPATCH_SCHEMA = {
         "owners": list,
         "redirect_size": bool,
         "data_path": str,
+        "compatible_overlaps": list,
     },
     "valid_hook_conflict_actions": {"override", "skip"},
 }
@@ -613,7 +615,8 @@ def parse_patch_dict(raw: dict, source_path: str,
                 "aux_patches", "requires", "supersedes",
                 "globals_initializer", "prepare_file", "baseline", "internal",
                 "migrate_from", "options", "resources", "link_group", "link_size",
-                "cave_fragments", "owners", "redirect_size", "data_path"):
+                "cave_fragments", "owners", "redirect_size", "data_path",
+                "compatible_overlaps"):
         if key in raw:
             d._extra[key] = raw[key]  # type: ignore
     if "summon_limit" in raw:

@@ -288,7 +288,12 @@ class PatcherPipeline:
             self.log(f"  EXE 版本: 原版")
 
         try:
-            validate_runtime_plan(self.patch_plan, code_buf, exe_profile)
+            validate_runtime_plan(
+                self.patch_plan, code_buf, exe_profile,
+                config_overrides=self._mod_config_overrides,
+                code_start_addr=code_start,
+                base_addr=base_addr,
+            )
         except ValueError as exc:
             self.result.error = str(exc)
             self.result.patches_status = "blocked"
