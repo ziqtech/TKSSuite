@@ -1,0 +1,49 @@
+{
+  "_format": 1,
+  "_group": "── 界面显示 ──",
+  "_comment": "数字列对齐修复 (合并原 shop_price_align / bag_num_align / equip_num_align 三个补丁)。问题: 商店买卖页 sub_424A2C (\"%-16.16s%5dX%2d\", call@0x424B99/0x424C18)、场品列表 sub_419458 (\"%-24.24s%3d\", call@0x419587)、装备列表 sub_418C90 (\"%-10.10s%4d\", call@0x418DC4) 的行文本由 sub_4175D8 → wvsprintfA 按 ANSI 字节格式化, TKT 名称中的 FCOLOR/FRESET 颜色宏字节 (MOD 给扩展物品名上绿色的 \\x02 n / \\x01 n) 被计入 %-N.Ns 的字节宽度却在 TextStep 渲染时不占像素 → 带宏名称 (10 字节 vs 原版 6 字节) 后续数字列整体左移 4×12=48px。修复: 四处 call 换成 call cave (fixed_layout_cave, 三个入口, 商店买/卖共用同一入口), cave 两段绘制 — 数字段在栈上压立即数拼出无填充格式串 (\"%5dX%2d\"/\"%3d\"/\"%4d\") 以 x=名称列起点+列宽×12 直画 (477/573/360, 均在 640 页面字体画布内), %5d/%3d/%4d 右对齐位置与原版逐像素一致; 名称段把 fmt 槽换成 \"%s\" (0x4E9977) 尾调用, 颜色宏照常生效。字体度量依据: FONT9696 96×96 字形按 1/4 缩放, 全角 24px=2×半角 12px, 故 N 字节名称列宽恒等于 N×12px。实现细节见同目录 cave_code.py。hooks[].pattern 为含 rel32 的完整字节序列 (fixed_layout_cave 的 pattern 不支持通配), 另声明 fallback_rva (hook 写入点 RVA) 兜底; fixed_layout_cave 的 hook 写入不走 detect_hook_type 冲突检测, 直接覆盖 — 四个 hook 点原版指令本就是 call rel32 (call sub_4175D8), cave 内以 mov eax,0x4175D8 / call eax 绝对地址重调, 不依赖被覆盖的 rel32。局限: 名称段不再按 %-N.Ns 截断, 名称可见宽超过名称列 (商店 8 汉字/场品 12 汉字/装备 5 汉字) 会压到数字列, 原版与常规 MOD 名称 (≤4 汉字) 不受影响。\n\nv2 (2026-10-11): 首次合并实测打开商店黑屏 — fixed_layout_cave 的 hooks[] 写入点就是 pattern 起点 (引擎写 call 时 ha = code_start_addr + off, 没有 cave_hook 的 hook_offset 字段), 首版 pattern 以 push 0x11D 等压参指令开头, call 被写到压参指令上 (日志: hook shop_buy @0x00424B90), cave 进入时栈中无 obj/x 参数, 读参全部错位导致崩溃。v2 pattern 改为以 E8 开头的 \"E8 rel32 + add esp\" 8 字节序列 (rel32 写死指向 0x4175D8, 四个写入点各自全 EXE 唯一), pattern 起点 = hook 写入点。同时块起点从 0x680 后移到 0x7F0: 0x680 起是 summon_extend 的 fixed 块 (其 cave_layout 声明占用 [0x680,0x7EB)), 首版与其重叠导致 summon_extend 被布局引擎阻止应用 (日志 CAVE-LAYOUT-ERR)。",
+  "type": "fixed_layout_cave",
+  "id": "num_column_align",
+  "name": "数字列对齐修复",
+  "desc": "商店价格列、场品数量列、装备数值列固定对齐: 名称中的颜色控制字节不再挤占列宽, 带颜色宏的扩展物品与原版物品数字位置一致, 名称颜色保留",
+  "optional": true,
+  "default_checked": true,
+  "hooks": [
+    {
+      "name": "shop_buy",
+      "pattern": "E8 3A 2A FF FF 83 C4 1C",
+      "hook_size": 5,
+      "cave_entry_offset": 2032,
+      "expect_count": 1,
+      "fallback_rva": 150425
+    },
+    {
+      "name": "shop_sell",
+      "pattern": "E8 BB 29 FF FF 83 C4 1C",
+      "hook_size": 5,
+      "cave_entry_offset": 2032,
+      "expect_count": 1,
+      "fallback_rva": 150552
+    },
+    {
+      "name": "bag_num",
+      "pattern": "E8 4C E0 FF FF 83 C4 18",
+      "hook_size": 5,
+      "cave_entry_offset": 2098,
+      "expect_count": 1,
+      "fallback_rva": 103815
+    },
+    {
+      "name": "equip_num",
+      "pattern": "E8 0F E8 FF FF 83 C4 18",
+      "hook_size": 5,
+      "cave_entry_offset": 2156,
+      "expect_count": 1,
+      "fallback_rva": 101828
+    }
+  ],
+  "cave_code_file": "cave_code.py",
+  "cave_layout_size": 2214,
+  "format": "TKSPATCH",
+  "format_version": 1
+}
