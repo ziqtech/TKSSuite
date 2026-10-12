@@ -92,7 +92,7 @@ from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm
 from editor_utils.version import format_title
 from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat, lzss_decompress_save, lzss_compress_save
 from editor_utils.skill_table import (
-    SKILL_TYPE_SHORT, load_skill_table_safe,
+    SKILL_TYPE_SHORT, SKILL_ORIG_CNT, load_skill_table_safe,
 )
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.tkt_display import strip_tkt_macros
@@ -769,8 +769,6 @@ class WarpcEditorV2(EditorMainWindow):
         em.addAction("删除当前角色", self._delete_record)
         em.addSeparator()
         em.addAction("复制为新增角色", self._duplicate_record)
-        em.addAction("导出当前角色(.warpc)", self._export_warpc)
-        em.addAction("导入角色(.warpc)", self._import_warpc)
 
         am = mb.addMenu("分析(&S)")
         am.addAction("成长数据表 (1-60级)", self._show_growth_table)
@@ -1609,11 +1607,16 @@ class WarpcEditorV2(EditorMainWindow):
 
     def _build_skill_effect_section(self, parent):
         max_slots = WARPC_FIELD_COUNT - 273
-        # Legacy mapping is addressed as 273 + skill_id. Extended command
-        # skills use the separate global-default/sparse-override layer.
+        # 原版位置槽映射: 控件槽位 i → 字段 [273+i]。原版数据 type==0 的
+        # 指令技能为 0..251 与 344..349, 按编号排序后 0..251 槽位与技能编号
+        # 一致 (游戏按 273+skill_id 常规读取), 普通攻击(344) 落在槽位 252 →
+        # 字段 525 (游戏普通攻击特殊路径 447DAC 读取的正是该字段)。
+        # 扩展指令技能 (350+) 走独立的全局默认/稀疏覆盖层 (附加技能效果判定页),
+        # 不在此映射内。必须限定原版 350 条范围后再按槽位截断,
+        # 否则普通攻击会被 skill_id < max_slots 之类的编号过滤误删。
         active_indices = [
             i for i in sorted(self._skill_types)
-            if self._skill_types.get(i) == 0 and i < max_slots
+            if i < SKILL_ORIG_CNT and self._skill_types.get(i) == 0
         ] if self._skill_types else []
         count = min(len(active_indices), max_slots)
         if count == 0:
@@ -1644,7 +1647,7 @@ class WarpcEditorV2(EditorMainWindow):
             cell.setSpacing(2)
             lbl = QLabel(sname[:15])
             lbl.setProperty("class", "PropLabel")
-            lbl.setToolTip(f"[{273+skill_idx}] TKSkill#{skill_idx} → TKKon ID")
+            lbl.setToolTip(f"[{273+i}] TKSkill#{skill_idx} → TKKon ID")
             cell.addWidget(lbl)
             box = QFrame()
             box.setObjectName("FakeInputBox")
@@ -1665,7 +1668,7 @@ class WarpcEditorV2(EditorMainWindow):
             name_lbl.setProperty("class", "ExtraPreviewText")
             name_lbl.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)  # 不撑宽
             cell.addWidget(name_lbl)
-            self._skill_effect_widgets.append((skill_idx, ev))
+            self._skill_effect_widgets.append((i, ev))
             self._skill_effect_name_labels.append(name_lbl)
             ev.textChanged.connect(
                 lambda _, idx=i, sv=ev: self._update_kon_label(idx, sv))
@@ -3579,7 +3582,7 @@ class WarpcEditorV2(EditorMainWindow):
                 self._table_panel.model.reload()
             self.status_var.setText(f"角色 #{self._editing_idx} 草稿已重置为已应用值")
 
-    # ── 新增/复制/粘贴/清除/删除/导出/导入 ──
+    # ── 新增/复制/粘贴/清除/删除 ──
     @staticmethod
     def _blank_actor_fields():
         """新增/清除角色共用的默认模板 (role=-1 未激活, 属性为新增默认值)。"""
@@ -3806,7 +3809,6 @@ class WarpcEditorV2(EditorMainWindow):
             delete_action.setToolTip("原版角色不能删除，请使用清除功能")
         menu.addSeparator()
         menu.addAction("复制为新增角色", self._duplicate_record)
-        menu.addAction("导出当前角色(.warpc)", self._export_warpc)
         return menu
 
     def _on_table_context_menu(self, pos):
@@ -3881,58 +3883,6 @@ class WarpcEditorV2(EditorMainWindow):
         # 选择跟随数据: 选中目标行, 使被移动的角色保持选中
         self.table.selectRow(tgt_row)
         self.status_var.setText(f"已交换 #{cur_idx} ↔ #{tgt_idx} (内存, 未保存)")
-
-    def _export_warpc(self):
-        if self._editing_idx < 0: return
-        # 导出当前草稿状态 (所见即所导)
-        self._flush_widgets_to_draft()
-        rec = self._draft_records[self._editing_idx]
-        nm = self._char_name(rec)
-        safe_name = "".join(c for c in nm if c not in r'\/:*?"<>|' and ord(c)>=32) or f"角色_{self._editing_idx}"
-        fp, _ = QFileDialog.getSaveFileName(self, "导出角色", f"{safe_name}.warpc", "WarPC文件 (*.warpc)")
-        if not fp: return
-        magic = b'WPC1'
-        raw = struct.pack('<' + 'h' * WARPC_FIELD_COUNT, *rec['fields'])
-        with open(fp, 'wb') as f:
-            f.write(magic + raw)
-        self.status_var.setText(f"已导出: {os.path.basename(fp)}")
-
-    def _import_warpc(self):
-        if not self.records: return
-        fp, _ = QFileDialog.getOpenFileName(self, "导入角色", "", "WarPC文件 (*.warpc)")
-        if not fp: return
-        try:
-            with open(fp, 'rb') as f:
-                data = f.read()
-            if len(data) < 4 or data[:4] != b'WPC1':
-                QMessageBox.critical(self, "格式错误", "不是有效的 .warpc 文件")
-                return
-            raw = data[4:]
-            if len(raw) < WARPC_FIELD_COUNT*2:
-                QMessageBox.critical(self, "格式错误", f"需要 {WARPC_FIELD_COUNT*2} 字节, 实际 {len(raw)}")
-                return
-            fields = list(struct.unpack_from('<' + 'h' * WARPC_FIELD_COUNT, raw, 0))
-            new_idx = len(self.records)
-            if new_idx >= GAME_ACTOR_CAPACITY:
-                QMessageBox.warning(
-                    self,
-                    "角色容量已满",
-                    f"原版扩展补丁最多支持 {GAME_ACTOR_CAPACITY} 条 WarPC 记录。",
-                )
-                return
-            self.records.append({'index': new_idx, 'fields': fields})
-            self._draft_records.append({'index': new_idx, 'fields': list(fields)})
-            if self._draft_skill_extension is not None:
-                self._draft_skill_extension = \
-                    self._draft_skill_extension.with_actor_learn_bytes(
-                        new_idx,
-                        self._default_actor_learn_row(
-                            self._draft_skill_extension, 0),
-                    ).clear_actor_overrides(new_idx)
-            self._after_record_append(new_idx)
-            self.status_var.setText(f"已导入: {os.path.basename(fp)} → #{new_idx}")
-        except Exception as e:
-            QMessageBox.critical(self, "导入失败", str(e))
 
     # ── 保存 ──
     def _save(self):

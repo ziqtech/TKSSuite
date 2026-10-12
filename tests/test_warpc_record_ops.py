@@ -324,8 +324,7 @@ class RecordOpsTests(unittest.TestCase):
             by_text = dict(actions)
             self.assertEqual(
                 [t for t, _ in actions],
-                ["复制", "粘贴", "清除", "删除",
-                 "复制为新增角色", "导出当前角色(.warpc)"])
+                ["复制", "粘贴", "清除", "删除", "复制为新增角色"])
             self.assertTrue(by_text["复制"])
             self.assertTrue(by_text["粘贴"], "已有剪贴板时粘贴应可用")
             self.assertFalse(by_text["删除"], "原版角色删除应禁用")

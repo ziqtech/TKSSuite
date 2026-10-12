@@ -166,5 +166,45 @@ class ActEditorNameTests(unittest.TestCase):
         self.assertEqual(names.get(0), '主角《空手攻擊》')
 
 
+class DisplayNameFallbackTests(unittest.TestCase):
+    """ActEditor._display_name — 名称列兜底显示。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _app()
+        cls.mod = _load_module("act_editor/act_editor.py",
+                               "_test_act_editor_display")
+
+    def _dn(self, idx, resolved, has_data):
+        return self.mod.ActEditorV2._display_name(idx, resolved, has_data)
+
+    def test_resolved_name_passthrough(self):
+        self.assertEqual(self._dn(644, '張繡《攻擊》', True), '張繡《攻擊》')
+        self.assertEqual(self._dn(528, '鬼將《火 焰 術》', True),
+                         '鬼將《火 焰 術》')
+
+    def test_empty_entry_shows_placeholder(self):
+        self.assertEqual(self._dn(100, '', False), '空槽')
+        self.assertEqual(self._dn(100, '任意名', False), '空槽')
+
+    def test_extended_entry_without_name(self):
+        self.assertEqual(self._dn(650, '', True), '新增')
+        self.assertEqual(self._dn(653, '', True), '新增')
+
+    def test_original_unused_slots_keep_unknown(self):
+        for idx in (640, 641, 642):
+            self.assertEqual(self._dn(idx, '', True), '未知')
+
+    def test_unreferenced_entry_gets_explicit_placeholder(self):
+        """非空且未被任何 TKKon 引用的原版范围条目: 显示明确占位而非空白。
+
+        回归背景: 用户在 ACT 645 放了新动画并接好 WarPC 普攻 → TKKon 645,
+        但 TKKon 645 的 tkact_id 仍是模板默认 528, 名称列空白被误读为
+        "大于649的数据名称解析失败"。
+        """
+        self.assertEqual(self._dn(645, '', True), '(未被TKKon引用)')
+        self.assertEqual(self._dn(300, '', True), '(未被TKKon引用)')
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

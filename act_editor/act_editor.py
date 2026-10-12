@@ -1739,20 +1739,31 @@ class ActEditorV2(EditorMainWindow):
         self._sort_reverse = not rev
         self._refresh_table()
 
+    @staticmethod
+    def _display_name(idx: int, resolved: str, has_data: bool) -> str:
+        """列表「名称」列的最终显示值 (解析名 + 兜底标记)。
+
+        非空但没有任何 TKKon 条目的 tkact_id 指向它的条目显示明确占位,
+        避免"空白"被误读为名称解析失败 (实际是 TKKon→TKAct 接线缺失,
+        应到 kon_editor 把对应条目的 TKAct动画索引 指向本条目)。
+        """
+        if not has_data:
+            return '空槽'
+        if resolved:
+            return resolved
+        if idx >= ACT_ENTRY_COUNT:
+            return '新增'
+        if idx in (640, 641, 642):
+            return '未知'
+        return '(未被TKKon引用)'
+
     def _refresh_table(self):
         self.table.blockSignals(True)
         self.table.setRowCount(0)
         for row, idx in enumerate(self.filtered_indices):
             entry = self.entries[idx]
             has_data = not entry_is_empty(entry)
-            if has_data:
-                nm = self.names.get(idx, '')
-                if not nm and idx >= ACT_ENTRY_COUNT:
-                    nm = '新增'
-                elif not nm and idx in (640, 641, 642):
-                    nm = '未知'
-            else:
-                nm = '空槽'
+            nm = self._display_name(idx, self.names.get(idx, ''), has_data)
             self.table.insertRow(row)
             self.table.setItem(row, 0, QTableWidgetItem(str(idx)))
             name_item = QTableWidgetItem(nm)
