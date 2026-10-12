@@ -23,7 +23,9 @@ call cave; cave 内两段绘制 —
 [0x680,0x7EB), 引擎按块内非零区间 [0x7F0,0x8A6) 硬编码预留):
   [0x7F0, 0x832)  entry_shop   66B  商店买/卖两处 hook 共用 (7 参数栈, x=285→477, "%5dX%2d")
   [0x832, 0x86C)  entry_bag    58B  场品列表 (6 参数栈, x=285→573, "%3d")
-  [0x86C, 0x8A6)  entry_equip  58B  装备列表 (6 参数栈, x=240→360, "%4d")
+  [0x86C, 0x8A6)  entry_equip  58B  菜单技能列表消耗列 (6 参数栈, x=240→360, "%4d")
+                        ↑ hook 名 equip_num 系沿用: sub_418C90 实为技能列表,
+                          装备页列表 sub_419A24 只画名字无数字列 (v3 纠正误标)
 
 栈约定: 引擎在 hook 点写 E8 call (patch_engine 一致), 进入 cave 时
 [esp] = 返回地址, 其后为宿主压好的 7/6 个参数 (cdecl)。cave 只用
@@ -60,7 +62,7 @@ SHOP_CAVE = bytes.fromhex(
 BAG_CAVE = bytes.fromhex(
     '56'                 # push esi
     '8B742418'           # mov esi,[esp+0x18]        ; esi = name
-    '6825643300'         # push 0x00643325           ; "%3d\0"
+    '6825336400'         # push 0x00643325           ; "%3d\0"
     'FF742420'           # push [esp+0x20]           ; num  [S0+0x18]
     '8D442404'           # lea eax,[esp+4]           ; eax = "%3d"
     '50'                 # push eax                  ; fmt
@@ -76,11 +78,11 @@ BAG_CAVE = bytes.fromhex(
     'FFE0'               # jmp eax                   ; 名称段 (尾调用)
 )
 
-# 装备列表 (6 参数: obj,x,y,fmt,name,num; 数字段 "%4d" x=360)
+# 菜单技能列表消耗列 (6 参数: obj,x,y,fmt,name,cost; 数字段 "%4d" x=360)
 EQUIP_CAVE = bytes.fromhex(
     '56'                 # push esi
     '8B742418'           # mov esi,[esp+0x18]        ; esi = name
-    '6825643400'         # push 0x00643425           ; "%4d\0"
+    '6825346400'         # push 0x00643425           ; "%4d\0"
     'FF742420'           # push [esp+0x20]           ; num  [S0+0x18]
     '8D442404'           # lea eax,[esp+4]           ; eax = "%4d"
     '50'                 # push eax                  ; fmt
