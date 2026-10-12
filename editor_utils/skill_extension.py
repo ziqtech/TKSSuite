@@ -289,6 +289,27 @@ class SkillExtension:
         return replace(self, overrides=tuple(sorted(
             retained, key=lambda item: (item.actor_id, item.skill_id))))
 
+    def remove_actor(self, actor_id: int) -> "SkillExtension":
+        """Drop one actor row: later actors shift up, the last row is zeroed
+        and sparse overrides renumber accordingly (actor_count is kept)."""
+        self.validate()
+        if not 0 <= actor_id < self.actor_count:
+            raise SkillExtensionFormatError(
+                f"actor out of range: {actor_id}")
+        stride = self.stride
+        learn = bytearray(self.learn)
+        del learn[actor_id * stride:(actor_id + 1) * stride]
+        learn.extend(b"\x00" * stride)
+        overrides = tuple(sorted(
+            (
+                (entry if entry.actor_id < actor_id
+                 else replace(entry, actor_id=entry.actor_id - 1))
+                for entry in self.overrides
+                if entry.actor_id != actor_id
+            ),
+            key=lambda item: (item.actor_id, item.skill_id)))
+        return replace(self, learn=bytes(learn), overrides=overrides)
+
     def copy_actor_extension(self, source_actor: int,
                              target_actor: int) -> "SkillExtension":
         """Copy one actor's learn row and sparse overrides to another actor."""

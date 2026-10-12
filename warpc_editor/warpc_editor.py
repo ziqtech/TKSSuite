@@ -553,6 +553,7 @@ class WarpcEditorV2(EditorMainWindow):
         self.filtered_indices = []
         self._dirty = False
         self._editing_idx = -1
+        self._clipboard = None   # 记录级剪贴板: 复制/粘贴整个角色数据
 
         # 存档模式状态
         self._save_mode = False   # True = 编辑的是 sav.N 中的 WarPC 数据
@@ -763,6 +764,11 @@ class WarpcEditorV2(EditorMainWindow):
         em = mb.addMenu("编辑(&E)")
         em.addAction("新增角色", QKeySequence("Ctrl+N"), self._add_new)
         em.addAction("复制当前角色", self._copy_record)
+        em.addAction("粘贴到当前角色", self._paste_record)
+        em.addAction("清除当前角色", self._clear_record)
+        em.addAction("删除当前角色", self._delete_record)
+        em.addSeparator()
+        em.addAction("复制为新增角色", self._duplicate_record)
         em.addAction("导出当前角色(.warpc)", self._export_warpc)
         em.addAction("导入角色(.warpc)", self._import_warpc)
 
@@ -847,6 +853,9 @@ class WarpcEditorV2(EditorMainWindow):
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
         self.table.itemSelectionChanged.connect(self._on_table_select)
+        # 列表右键菜单: 行上=复制/粘贴/清除/删除/复制为新增/导出, 空白处=新增角色
+        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._on_table_context_menu)
 
         # 左侧容器: 角色列表 + 排序按钮栏
         left_panel = QWidget()
@@ -3570,15 +3579,10 @@ class WarpcEditorV2(EditorMainWindow):
                 self._table_panel.model.reload()
             self.status_var.setText(f"角色 #{self._editing_idx} 草稿已重置为已应用值")
 
-    # ── 新增/复制/导出/导入 ──
-    def _add_new(self):
-        if not self.records: return
-        new_idx = len(self.records)
-        if new_idx >= GAME_ACTOR_CAPACITY:
-            themed_messagebox(
-                self, QMessageBox.Warning, "角色容量已满",
-                f"原版扩展补丁最多支持 {GAME_ACTOR_CAPACITY} 条 WarPC 记录。")
-            return
+    # ── 新增/复制/粘贴/清除/删除/导出/导入 ──
+    @staticmethod
+    def _blank_actor_fields():
+        """新增/清除角色共用的默认模板 (role=-1 未激活, 属性为新增默认值)。"""
         fields = [0]*WARPC_FIELD_COUNT
         fields[3] = -1
         fields[4] = 100
@@ -3595,6 +3599,39 @@ class WarpcEditorV2(EditorMainWindow):
         fields[32] = 1
         for si in range(82, 88):
             fields[si] = -1
+        return fields
+
+    @staticmethod
+    def _default_actor_learn_row(extension, state):
+        """扩展学习矩阵单行默认值: 已注册技能列填 state, 容量富余列保持 0。
+
+        行长必须等于 stride (固定容量矩阵), 直接乘 skill_count 会因
+        长度不匹配被 with_actor_learn_bytes 拒绝。"""
+        return (bytes([state]) * extension.skill_count
+                + bytes(extension.stride - extension.skill_count))
+
+    def _after_record_append(self, new_idx):
+        """结构追加后的公共收尾: 置脏 + 刷新列表/表格模式 + 选中新行。"""
+        self._dirty = True
+        self._apply_filter()
+        for r in range(self.table.rowCount()):
+            if int(self.table.item(r, 0).text()) == new_idx:
+                self.table.selectRow(r)
+                break
+        if self._table_panel is not None:
+            self._table_panel.model.reload()
+
+    def _add_new(self):
+        if not self.records:
+            QMessageBox.information(self, "提示", "请先加载数据")
+            return
+        new_idx = len(self.records)
+        if new_idx >= GAME_ACTOR_CAPACITY:
+            themed_messagebox(
+                self, QMessageBox.Warning, "角色容量已满",
+                f"原版扩展补丁最多支持 {GAME_ACTOR_CAPACITY} 条 WarPC 记录。")
+            return
+        fields = self._blank_actor_fields()
         self.records.append({'index': new_idx, 'fields': fields})
         self._draft_records.append({'index': new_idx, 'fields': list(fields)})
         if self._draft_skill_extension is not None:
@@ -3602,18 +3639,141 @@ class WarpcEditorV2(EditorMainWindow):
             self._draft_skill_extension = \
                 self._draft_skill_extension.with_actor_learn_bytes(
                     new_idx,
-                    bytes([default_state]) *
-                    self._draft_skill_extension.skill_count,
+                    self._default_actor_learn_row(
+                        self._draft_skill_extension, default_state),
                 ).clear_actor_overrides(new_idx)
-        self._dirty = True
-        self._apply_filter()
-        for r in range(self.table.rowCount()):
-            if int(self.table.item(r, 0).text()) == new_idx:
-                self.table.selectRow(r)
-                break
+        self._after_record_append(new_idx)
         self.status_var.setText(f"已新增角色 #{new_idx} (内存, 未保存)")
 
-    def _copy_record(self):
+    def _copy_record(self, idx=None):
+        """复制角色数据到剪贴板 (对齐 kon/skill 编辑器, 可粘贴到任意角色)。"""
+        if idx is None:
+            idx = self._editing_idx
+        if idx < 0 or idx >= len(self.records):
+            return
+        # 以草稿为源 (复制用户当前看到/编辑中的状态)
+        self._flush_widgets_to_draft()
+        clip = {'fields': list(self._draft_records[idx]['fields'])}
+        extension = self._draft_skill_extension
+        if extension is not None and idx < extension.actor_count:
+            clip['ext_learn'] = extension.actor_learn_bytes(idx)
+            clip['ext_overrides'] = tuple(
+                entry for entry in extension.overrides
+                if entry.actor_id == idx)
+        self._clipboard = clip
+        self.status_var.setText(
+            f"已复制角色 #{idx} 的数据 (可粘贴到任意角色)")
+
+    def _paste_record(self, idx=None):
+        """把剪贴板中的角色数据粘贴到目标角色 (草稿层, 「应用修改」提交)。"""
+        if idx is None:
+            idx = self._editing_idx
+        if (self._clipboard is None or idx < 0
+                or idx >= len(self._draft_records)):
+            return
+        dst = self._draft_records[idx]
+        if dst['fields'] != self._blank_actor_fields():
+            if themed_question(
+                    self, "确认覆盖",
+                    f"粘贴将覆盖角色 #{idx} 的现有内容，是否继续？"
+            ) != QMessageBox.Yes:
+                return
+        dst['fields'] = list(self._clipboard['fields'])
+        extension = self._draft_skill_extension
+        if extension is not None and 'ext_learn' in self._clipboard:
+            extension = extension.with_actor_learn_bytes(
+                idx, self._clipboard['ext_learn'])
+            extension = extension.clear_actor_overrides(idx)
+            entries = self._clipboard.get('ext_overrides', ())
+            if entries:
+                extension = extension.with_overrides([
+                    (idx, entry.skill_id, entry.tkkon_id)
+                    for entry in entries])
+            self._draft_skill_extension = extension
+        self._populate_edit(dst)
+        if self._table_panel is not None:
+            self._table_panel.model.reload()
+        self.status_var.setText(f"已粘贴到角色 #{idx} (草稿, 未应用)")
+
+    def _clear_record(self, idx=None):
+        """清除角色全部数据, 恢复为未激活的新增默认状态 (草稿层)。"""
+        if idx is None:
+            idx = self._editing_idx
+        if idx < 0 or idx >= len(self._draft_records):
+            return
+        dst = self._draft_records[idx]
+        blank = self._blank_actor_fields()
+        if dst['fields'] == blank:
+            QMessageBox.information(self, "提示", "当前角色已经为空白")
+            return
+        if themed_question(
+                self, "确认清除",
+                f"确定清除角色 #{idx} 的全部数据吗？\n"
+                "角色将恢复为未激活的新增默认状态。\n是否继续？"
+        ) != QMessageBox.Yes:
+            return
+        dst['fields'] = list(blank)
+        extension = self._draft_skill_extension
+        if extension is not None and idx < extension.actor_count:
+            self._draft_skill_extension = \
+                extension.with_actor_learn_bytes(
+                    idx, bytes(extension.stride)
+                ).clear_actor_overrides(idx)
+        self._populate_edit(dst)
+        if self._table_panel is not None:
+            self._table_panel.model.reload()
+        self.status_var.setText(f"已清除角色 #{idx} (草稿, 未应用)")
+
+    def _delete_record(self, idx=None):
+        if idx is None:
+            idx = self._editing_idx
+        if idx < 0 or idx >= len(self.records):
+            return
+        if idx < WARPC_ORIG_COUNT:
+            QMessageBox.information(
+                self, "提示",
+                f"原版角色 #{idx} 不能删除，只能使用清除功能。")
+            return
+        self._remove_record(idx)
+
+    def _remove_record(self, idx):
+        """删除扩展角色: 记录序号前移, 扩展学习/效果矩阵同步前移。"""
+        if idx < WARPC_ORIG_COUNT or idx >= len(self.records):
+            return
+        if themed_question(
+                self, "确认删除",
+                f"确定删除扩展角色 #{idx} 吗？\n"
+                "删除后后续角色序号会自动前移。") != QMessageBox.Yes:
+            return
+        # 序号前移会让未应用的字段级草稿错位, 先让用户应用或放弃
+        if not self._ensure_draft_resolved():
+            return
+        self.records.pop(idx)
+        self._draft_records.pop(idx)
+        for i, rec in enumerate(self.records):
+            rec['index'] = i
+        for i, rec in enumerate(self._draft_records):
+            rec['index'] = i
+        extension = self._skill_extension
+        if extension is not None:
+            self._skill_extension = extension.remove_actor(idx)
+            self._draft_skill_extension = self._skill_extension
+        self._dirty = True
+        self._editing_idx = -1
+        self._edit_snapshot = None
+        self._ext_effect_override_error = None
+        self.preview_name.setText("(未选中)")
+        self.preview_meta.setText("")
+        self.preview_desc.setText("请在左侧列表中选择角色。")
+        self.preview_avatar.clear()
+        self._apply_filter()
+        if self._table_panel is not None:
+            self._table_panel.model.reload()
+        self.status_var.setText(
+            f"已删除扩展角色 #{idx} (共 {len(self.records)} 条, 已修改)")
+
+    def _duplicate_record(self):
+        """把当前角色复制为列表末尾的新角色 (数据 + 扩展学习/效果)。"""
         if self._editing_idx < 0: return
         # 以草稿为源 (复制用户当前看到/编辑中的状态)
         self._flush_widgets_to_draft()
@@ -3630,13 +3790,38 @@ class WarpcEditorV2(EditorMainWindow):
             self._draft_skill_extension = \
                 self._draft_skill_extension.copy_actor_extension(
                     self._editing_idx, new_idx)
-        self._dirty = True
-        self._apply_filter()
-        for r in range(self.table.rowCount()):
-            if int(self.table.item(r, 0).text()) == new_idx:
-                self.table.selectRow(r)
-                break
+        self._after_record_append(new_idx)
         self.status_var.setText(f"已复制 #{self._editing_idx} → #{new_idx}")
+
+    def _build_table_context_menu(self, idx):
+        """构建角色行右键菜单 (复制/粘贴/清除/删除 + warpc 专属操作)。"""
+        menu = QMenu(self)
+        menu.addAction("复制", lambda: self._copy_record(idx))
+        paste_action = menu.addAction("粘贴", lambda: self._paste_record(idx))
+        paste_action.setEnabled(self._clipboard is not None)
+        menu.addAction("清除", lambda: self._clear_record(idx))
+        delete_action = menu.addAction("删除", lambda: self._delete_record(idx))
+        delete_action.setEnabled(idx >= WARPC_ORIG_COUNT)
+        if idx < WARPC_ORIG_COUNT:
+            delete_action.setToolTip("原版角色不能删除，请使用清除功能")
+        menu.addSeparator()
+        menu.addAction("复制为新增角色", self._duplicate_record)
+        menu.addAction("导出当前角色(.warpc)", self._export_warpc)
+        return menu
+
+    def _on_table_context_menu(self, pos):
+        """角色列表右键菜单: 空白处=新增角色, 行上=记录操作。"""
+        item = self.table.itemAt(pos)
+        if item is None:
+            menu = QMenu(self)
+            menu.addAction("新增角色", self._add_new)
+            menu.exec(self.table.viewport().mapToGlobal(pos))
+            return
+        idx = int(self.table.item(item.row(), 0).text())
+        # 右键即选中并填充编辑区 (与 kon/skill 编辑器一致)
+        self.table.selectRow(item.row())
+        self._build_table_context_menu(idx).exec(
+            self.table.viewport().mapToGlobal(pos))
 
     def _move_record(self, delta):
         """上移/下移选中角色: 与相邻角色整体交换数据。
@@ -3741,15 +3926,10 @@ class WarpcEditorV2(EditorMainWindow):
                 self._draft_skill_extension = \
                     self._draft_skill_extension.with_actor_learn_bytes(
                         new_idx,
-                        bytes([0]) *
-                        self._draft_skill_extension.skill_count,
+                        self._default_actor_learn_row(
+                            self._draft_skill_extension, 0),
                     ).clear_actor_overrides(new_idx)
-            self._dirty = True
-            self._apply_filter()
-            for r in range(self.table.rowCount()):
-                if int(self.table.item(r, 0).text()) == new_idx:
-                    self.table.selectRow(r)
-                    break
+            self._after_record_append(new_idx)
             self.status_var.setText(f"已导入: {os.path.basename(fp)} → #{new_idx}")
         except Exception as e:
             QMessageBox.critical(self, "导入失败", str(e))
@@ -4144,7 +4324,9 @@ class WarpcEditorV2(EditorMainWindow):
             f"特性:\n"
             f"  · Godot 风格深/浅色主题切换\n"
             f"  · 分页编辑: 核心属性 / 装备技能 / 技能学习 / 效果判定 / 全部字段\n"
-            f"  · 自动关联 TKItem.dat 显示物品名称")
+            f"  · 自动关联 TKItem.dat 显示物品名称\n"
+            f"  · 每行右键: 复制 / 粘贴 / 清除；扩展角色另有删除\n"
+            f"  · 原版角色只能清除；扩展角色可清除或删除")
 
     def closeEvent(self, event):
         # 待应用草稿守卫 (含表单控件未暂存的修改)
