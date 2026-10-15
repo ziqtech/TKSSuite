@@ -1,0 +1,33 @@
+{
+  "_format": 1,
+  "type": "patch_sites",
+  "id": "burning_damage_fix",
+  "name": "燃烧状态伤害加倍修复",
+  "desc": "补齐燃烧目标受到的内力伤害×2及AI内力伤害评分，修复灭灵击、海啸术内力部分等遗漏；保留灭魂击、熔岩术、海啸术生命部分已有的燃烧倍率，不重复加倍，不改持续扣血、命中或回复。",
+  "optional": true,
+  "default_checked": true,
+  "autolayout_cave": true,
+  "cave_entries": {
+    "mp_damage": 0,
+    "mp_evaluation": 26
+  },
+  "cave_code": "9C 8B 45 F0 C1 E0 05 80 B8 A4 04 9E 00 00 74 03 D1 65 DC 9D 8B 45 F0 8B D0 C3 9C 50 8B 45 F4 C1 E0 05 80 B8 A4 04 9E 00 00 74 03 D1 65 D4 58 9D 8B 55 E4 4A 74 07 9C 83 44 24 04 10 9D C3",
+  "sites": [
+    {
+      "rva": "0x420F3",
+      "expect": "8B 45 F0 8B D0",
+      "kind": "call",
+      "ref": "mp_damage",
+      "tag": "燃烧内力伤害：减伤完成后、扣内力前"
+    },
+    {
+      "rva": "0x3F99F",
+      "expect": "8B 55 E4 4A 75 0F",
+      "kind": "call",
+      "ref": "mp_evaluation",
+      "tag": "燃烧内力评价：保留敌我分支与标志位"
+    }
+  ],
+  "format": "TKSPATCH",
+  "format_version": 1
+}
