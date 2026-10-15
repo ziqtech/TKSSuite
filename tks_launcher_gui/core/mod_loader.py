@@ -760,6 +760,11 @@ DAT_FILE_INFO = {
 }
 
 
+# TKShop.dat 8B 记录的混合字段布局 (须与 shop_editor.load_shop_data 一致):
+# f0 area_id(int16@0) / f1 item_ref(int16@2) / f2 condition(int16@4) / f3 display(uint8@6)
+TKSHOP_FIELD_LAYOUT = ((0, "<h"), (2, "<h"), (4, "<h"), (6, "<B"))
+
+
 # WarData.dat 字段布局表
 # 与 DAT_FILE_INFO 不同: WarData.dat 的字段类型异构 (uint8/int8/uint16 混合),
 # 无法用统一的 field_type + 字段索引 (f0/f1/...) 描述, 因此通过字段名引用,
@@ -1040,6 +1045,13 @@ def _apply_fields_to_record(buf: bytearray, index: int, rec_size: int,
                 # WarWay.dat 逐格 int8: f0..f1023 直接映射到 32x32 网格的每个字节
                 if base_off + fi < len(buf):
                     struct.pack_into('<b', buf, base_off + fi, int(value))
+                else:
+                    skipped += 1
+            elif field_type == "mixed" and fi < len(TKSHOP_FIELD_LAYOUT):
+                # TKShop.dat 异构字段: 按布局表定位偏移与类型
+                off, fmt = TKSHOP_FIELD_LAYOUT[fi]
+                if base_off + off + struct.calcsize(fmt) <= len(buf):
+                    struct.pack_into(fmt, buf, base_off + off, int(value))
                 else:
                     skipped += 1
             else:
